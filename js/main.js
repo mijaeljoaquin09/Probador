@@ -5,8 +5,9 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { buildWorld } from './world.js';
-import { Character } from './character.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { MAPS, MAP_IDS, DEFAULT_MAP } from './maps/index.js';
+import { Character, charMaterial } from './character.js';
 import { Crowd } from './npc.js';
 import { FX } from './fx.js';
 import { GameClient } from './game.js';
@@ -42,10 +43,13 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: settings.quality !
 renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
+// reflejos suaves en todos los materiales (entorno de estudio)
+{ const pm = new THREE.PMREMGenerator(renderer); scene.environment = pm.fromScene(new RoomEnvironment(), 0.04).texture; pm.dispose(); }
 const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 450);
 let composer = null;
+let dynRes = 1; // resolución dinámica: baja sola si el celu va lento
 function resize() {
-  const pr = settings.quality === 'alta' ? Math.min(devicePixelRatio, 2) : settings.quality === 'media' ? Math.min(devicePixelRatio, 1.5) : Math.min(devicePixelRatio, 1);
+  const pr = dynRes * (settings.quality === 'alta' ? Math.min(devicePixelRatio, 2) : settings.quality === 'media' ? Math.min(devicePixelRatio, 1.5) : Math.min(devicePixelRatio, 1));
   renderer.setPixelRatio(pr); renderer.setSize(innerWidth, innerHeight, false);
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
   if (composer) { composer.setPixelRatio(pr); composer.setSize(innerWidth, innerHeight); }
@@ -62,7 +66,7 @@ function setupComposer() {
 addEventListener('resize', resize); resize();
 
 // ---------- estado global ----------
-let W = null, fx = null, menuCrowd = null, preview = null, game = null, hemi = null, baseLight = null;
+let W = null, fx = null, menuCrowd = null, preview = null, game = null, hemi = null, baseLight = null, gltfData = null, mapPending = null;
 const be = makeBackend(!!Q.get('mock'));
 let online = false;          // pudimos hablar con el servidor
 let prof = null;             // perfil (null = invitada)
@@ -109,6 +113,39 @@ function applyQuality() {
   setupComposer(); resize();
 }
 
+// ---------- mapas ----------
+function disposeMap(w) {
+  scene.remove(w.root);
+  const CM = charMaterial();
+  w.root.traverse((o) => {
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) for (const m of (Array.isArray(o.material) ? o.material : [o.material])) { if (m === CM) continue; for (const k of ['map', 'emissiveMap']) if (m[k] && m[k].isCanvasTexture) m[k].dispose(); m.dispose(); }
+  });
+  if (w.sun && w.sun.shadow.map) { w.sun.shadow.map.dispose(); w.sun.shadow.map = null; }
+}
+function loadMap(id) {
+  if (!MAPS[id]) id = DEFAULT_MAP;
+  if (W && W.id === id) return;
+  if (W) { if (game) game.stop(); disposeMap(W); }
+  if (menuCrowd) { menuCrowd.dispose(); menuCrowd = null; }
+  const root = new THREE.Group(); root.name = 'mapa-' + id;
+  W = MAPS[id].build(root, gltfData);
+  scene.add(root);
+  scene.fog = W.fog ? new THREE.Fog(W.fog.color, W.fog.near, W.fog.far) : null;
+  hemi = null; root.traverse((o) => { if (o.isHemisphereLight && !hemi) hemi = o; });
+  baseLight = { sun: W.sun.intensity, hemi: hemi ? hemi.intensity : 1, fog: scene.fog ? scene.fog.color.clone() : new THREE.Color() };
+  menuCrowd = new Crowd(W, scene, 1234, id === 'feria' ? 26 : 16, { shadow: settings.quality === 'alta' });
+  const m = W.menu; if (preview) { preview.root.position.set(m.px, m.py, m.pz); preview.root.rotation.y = m.ry; }
+  store.set('lastMap', id);
+  applyQuality(); renderer.shadowMap.needsUpdate = true;
+}
+// cambiar de mapa mostrando la pantalla de carga un instante
+function requestMap(id) {
+  if (mapPending || !MAPS[id] || (W && W.id === id)) return;
+  mapPending = id; $('loadMsg').textContent = `Armando ${MAPS[id].n}…`; $('loadBar').style.width = '60%'; $('loading').classList.add('on');
+  setTimeout(() => { try { loadMap(id); } catch (e) { console.error(e); } mapPending = null; $('loading').classList.remove('on'); renderLobby.k = ''; }, 80);
+}
+
 // ---------- mi look y cosméticos ----------
 let myLook = store.get('look', null) || randomLook();
 const cosm = () => ({ ts: (prof && prof.tag_style) || 'tag_clasico', nc: (prof && prof.name_color) || 'nc_blanco', em: (prof && prof.emote) || 'emo_saludo' });
@@ -143,16 +180,11 @@ async function boot() {
   const gltf = await new GLTFLoader().parseAsync(bin.buffer, BASE + 'assets/');
   $('loadMsg').textContent = 'Colgando la ropa…';
   await new Promise((r) => setTimeout(r, 30));
-  W = buildWorld(scene, gltf);
-  scene.traverse((o) => { if (o.isHemisphereLight && !hemi) hemi = o; });
-  baseLight = { sun: W.sun.intensity, hemi: hemi ? hemi.intensity : 1, fog: scene.fog ? scene.fog.color.clone() : new THREE.Color() };
+  gltfData = gltf;
+  fx = new FX(scene, renderer, { quality: () => settings.quality, crowd: () => menuCrowd, mannequins: () => (W ? W.mannequins : []) });
+  preview = new Character(myLook, { shadow: true }); scene.add(preview.root); refreshPreviewTag();
   bar.style.width = '75%';
-  fx = new FX(scene, renderer, { quality: () => settings.quality, crowd: () => menuCrowd, mannequins: () => W.mannequins });
-  menuCrowd = new Crowd(W, scene, 1234, 26, { shadow: settings.quality === 'alta' });
-  preview = new Character(myLook, { shadow: true });
-  preview.root.position.set(1.2, 0, 7.6); preview.root.rotation.y = 0.35;
-  scene.add(preview.root); refreshPreviewTag();
-  applyQuality();
+  loadMap(MAPS[Q.get('map')] ? Q.get('map') : (store.get('lastMap', '') || DEFAULT_MAP));
   game = new GameClient(app);
   app.input = input;
   $('loadMsg').textContent = 'Conectando…';
@@ -288,7 +320,10 @@ $('bAdmin').onclick = () => { sfx.click(); openAdmin(); };
 $('bSettings').onclick = () => { sfx.click(); renderSettings(); $('setQuit').classList.add('hidden'); openSheet('sSettings'); };
 
 // ================= JUGAR =================
-const cfgDraft = Object.assign({ max: 6, dur: 300, lives: 3, mode: 'ffa', pub: true, name: '' }, store.get('cfg2', {}));
+const cfgDraft = Object.assign({ max: 6, dur: 300, lives: 3, mode: 'ffa', pub: true, name: '', map: DEFAULT_MAP }, store.get('cfg2', {}));
+if (!MAPS[cfgDraft.map]) cfgDraft.map = DEFAULT_MAP;
+let practiceMap = MAPS[store.get('pmap', '')] ? store.get('pmap', '') : DEFAULT_MAP;
+const mapButtons = (sel) => MAP_IDS.map((id) => `<button data-v="${id}" class="${id === sel ? 'on' : ''}">${MAPS[id].e} ${MAPS[id].n}</button>`).join('');
 let practiceBots = 3, practiceTut = !store.get('tutDone2', 0);
 function openPlay(tab) { setPlayTab(tab); openSheet('sPlay'); }
 function setPlayTab(t) {
@@ -296,7 +331,7 @@ function setPlayTab(t) {
   $$('#sPlay [data-p]').forEach((p) => p.classList.toggle('hidden', p.dataset.p !== t));
   if (t === 'rooms') loadRooms();
   if (t === 'create') renderCreate();
-  if (t === 'practice') { $('pBots').textContent = practiceBots; $('pTut').classList.toggle('on', practiceTut); }
+  if (t === 'practice') { $('pMap').innerHTML = mapButtons(practiceMap); $('pBots').textContent = practiceBots; $('pTut').classList.toggle('on', practiceTut); }
   if (t === 'code') { $('joinMsg').textContent = prof ? '' : 'Necesitás una cuenta para jugar online.'; setTimeout(() => { const f = $$('#codeIn input').find((i) => !i.value); (f || $$('#codeIn input')[0]).focus(); }, 60); }
 }
 $('playTabs').onclick = (e) => { const b = e.target.closest('button'); if (b) { sfx.click(); setPlayTab(b.dataset.t); } };
@@ -316,6 +351,7 @@ function renderCreate() {
   $('cMax').textContent = cfgDraft.max; $('cLives').textContent = cfgDraft.lives;
   $$('#cDur button').forEach((b) => b.classList.toggle('on', +b.dataset.v === cfgDraft.dur));
   $$('#cMode button').forEach((b) => b.classList.toggle('on', b.dataset.v === cfgDraft.mode));
+  $('cMap').innerHTML = mapButtons(cfgDraft.map);
   $('cPublic').classList.toggle('on', cfgDraft.pub);
   if (!$('cName').value) $('cName').value = cfgDraft.name || (prof ? 'La sala de ' + prof.username : '');
   $('createMsg').textContent = prof ? '' : 'Necesitás una cuenta para crear salas online.';
@@ -325,6 +361,9 @@ $$('#sPlay [data-s]').forEach((b) => b.addEventListener('click', () => {
   cfgDraft[k] = k === 'max' ? clamp(cfgDraft[k] + d, 2, 12) : clamp(cfgDraft[k] + d, 1, 5); sfx.click(); renderCreate();
 }));
 $('cDur').onclick = (e) => { const b = e.target.closest('button'); if (b) { cfgDraft.dur = +b.dataset.v; sfx.click(); renderCreate(); } };
+$('cMap').onclick = (e) => { const b = e.target.closest('button'); if (b) { cfgDraft.map = b.dataset.v; sfx.click(); renderCreate(); } };
+$('pMap').onclick = (e) => { const b = e.target.closest('button'); if (b) { practiceMap = b.dataset.v; store.set('pmap', practiceMap); sfx.click(); $('pMap').innerHTML = mapButtons(practiceMap); } };
+$('lMap').onclick = (e) => { const b = e.target.closest('button'); if (b && app.isHost && !mapPending) { app.rules.setCfg({ map: b.dataset.v }); sfx.click(); } };
 $('cMode').onclick = (e) => { const b = e.target.closest('button'); if (b) { cfgDraft.mode = b.dataset.v; sfx.click(); renderCreate(); } };
 $('cPublic').onclick = () => { cfgDraft.pub = !cfgDraft.pub; sfx.click(); renderCreate(); };
 $('bCreateGo').onclick = () => { cfgDraft.name = $('cName').value.trim().slice(0, 30); store.set('cfg2', cfgDraft); startSession('host', { errEl: $('createMsg') }); };
@@ -667,9 +706,9 @@ async function startSession(kind, opts = {}) {
     const c = cosm();
     net.setPresence({ n: myName(), lk0: lookStr(myLook), ts: c.ts, nc: c.nc, em: c.em, uid: prof ? prof.id : '', v: 2 });
     if (app.isHost) {
-      app.rules = new HostRules({ W, now: () => Date.now() });
-      if (kind === 'host') { app.rules.setCfg({ max: cfgDraft.max, dur: cfgDraft.dur, lives: cfgDraft.lives, mode: cfgDraft.mode }); app.rules.G.name = cfgDraft.name || 'La sala de ' + prof.username; }
-      else { app.rules.setCfg({ max: 9, dur: 300, lives: 3, mode: 'ffa' }); app.rules.G.name = 'Práctica'; }
+      app.rules = new HostRules({ get W() { return W; }, now: () => Date.now() });
+      if (kind === 'host') { app.rules.setCfg({ max: cfgDraft.max, dur: cfgDraft.dur, lives: cfgDraft.lives, mode: cfgDraft.mode, map: cfgDraft.map }); app.rules.G.name = cfgDraft.name || 'La sala de ' + prof.username; }
+      else { app.rules.setCfg({ max: 9, dur: 300, lives: 3, mode: 'ffa', map: practiceMap }); app.rules.G.name = 'Práctica'; }
       app.rules.syncLobby(new Map([[net.myId, net.mine]]), net.myId);
       if (kind === 'practice') for (let i = 0; i < (opts.bots || 3); i++) app.rules.addBot();
       app.G = app.rules.G;
@@ -719,6 +758,7 @@ $('bResExit').onclick = () => endSession();
 $('bMenu').onclick = () => openSheet('sPause');
 $('bStart').onclick = () => {
   if (!app.isHost) return;
+  if (mapPending) return;
   if (!app.rules.start()) { $('lNote').textContent = 'Se necesitan al menos 2 jugadores (podés sumar bots).'; return; }
   sfx.fanfare(); roomBeat(); goFull();
 };
@@ -752,10 +792,11 @@ function renderLobby(G) {
   $('lMax').textContent = G.cfg.max; $('lLives').textContent = G.cfg.lives;
   $$('#lDur button').forEach((b) => b.classList.toggle('on', +b.dataset.v === G.cfg.dur));
   $$('#lMode button').forEach((b) => b.classList.toggle('on', b.dataset.v === G.cfg.mode));
+  $('lMap').innerHTML = mapButtons(G.cfg.map || DEFAULT_MAP);
   $('hostCfg').classList.toggle('hidden', !app.isHost);
   $('botBtns').classList.toggle('hidden', !app.isHost);
   $('bStart').classList.toggle('hidden', !app.isHost);
-  $('guestCfg').innerHTML = app.isHost ? '' : `<p>${G.cfg.mode === 'teams' ? '🔴🔵 Equipos' : '🙋 Todos contra todos'} · <b>${G.cfg.dur / 60} min</b> · <b>${G.cfg.lives}</b> ${G.cfg.lives === 1 ? 'vida' : 'vidas'}</p><p>Esperando a que la anfitriona empiece…</p>`;
+  $('guestCfg').innerHTML = app.isHost ? '' : `<p>${MAPS[G.cfg.map] ? MAPS[G.cfg.map].e + ' ' + MAPS[G.cfg.map].n + ' · ' : ''}${G.cfg.mode === 'teams' ? '🔴🔵 Equipos' : '🙋 Todos contra todos'} · <b>${G.cfg.dur / 60} min</b> · <b>${G.cfg.lives}</b> ${G.cfg.lives === 1 ? 'vida' : 'vidas'}</p><p>Esperando a que la anfitriona empiece…</p>`;
   const full = (G.full || []).includes(me);
   $('lNote').textContent = full ? 'La sala está llena 😕' : app.isHost ? (ids.length < 2 ? 'Esperando jugadores… pasales el código o sumá bots.' : 'Cuando estén todos, ¡empezá!') : '';
 }
@@ -806,7 +847,7 @@ function showResults(G) {
   } else if (session && session.kind === 'practice') rw.innerHTML = '<span style="font-weight:600;font-size:13px">La práctica no da gemas · jugá online para ganar 💎</span>';
   // podio 3D en el escenario
   clearPodium();
-  const g = new THREE.Group(); g.position.set(0, 1.25, 17.2); g.rotation.y = Math.PI; scene.add(g);
+  const PD = W.podium; const g = new THREE.Group(); g.position.set(PD.x, PD.y, PD.z); g.rotation.y = PD.ry; scene.add(g);
   const chars = []; const spots = [[0, 1.2, 0], [-1.6, 0.8, 0.3], [1.6, 0.5, 0.3]]; const colors = [0xffc93c, 0xd8dde6, 0xd9925a];
   ids.slice(0, 3).forEach((id, i) => {
     const [x, h, z] = spots[i];
@@ -817,7 +858,7 @@ function showResults(G) {
   });
   const floor = new THREE.Mesh(new THREE.CircleGeometry(2.7, 40).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xff4f8b, roughness: 0.8 })); floor.position.y = 0.03; floor.receiveShadow = true; g.add(floor);
   podium = { g, chars };
-  fx.burst(0, 4.2, 17.2, perfT);
+  fx.burst(PD.x, PD.y + 3, PD.z, perfT);
 }
 
 // ================= BUCLE =================
@@ -838,11 +879,12 @@ function loop() {
     }
     if (G) {
       app.G = G;
+      if (G.cfg && G.cfg.map && W && G.cfg.map !== W.id) requestMap(G.cfg.map);
       if (G.ph !== lastPh) { const prev = lastPh; lastPh = G.ph; onPhase(G, prev); }
       if (G.ph === 'lobby' && $('lobby').classList.contains('on')) renderLobby(G);
-      if (G.ph === 'play' && game.matchT0 !== G.t0 && G.pl[app.net.myId] && screenName === 'hud') game.startMatch();
+      if (G.ph === 'play' && !mapPending && game.matchT0 !== G.t0 && G.pl[app.net.myId] && screenName === 'hud' && (!G.cfg.map || G.cfg.map === W.id)) game.startMatch();
     }
-    if (game && G && G.ph === 'play' && game.started) game.update(dt);
+    if (game && G && G.ph === 'play' && game.started && !mapPending) game.update(dt);
     if (now - lastFlush > 75) { lastFlush = now; app.net.flush(); }
   }
   const menuView = screenName === 'home' || screenName === 'auth' || screenName === 'loading' || screenName === 'lobbybg' || (app.net && (!app.G || app.G.ph === 'lobby'));
@@ -855,16 +897,19 @@ function loop() {
     }
     const closet = $('sCloset').classList.contains('on');
     // con el vestidor abierto, la cámara se acerca al personaje
-    const cx = closet ? 1.55 : 2.5, cz = closet ? 10.0 : 11.3, cyy = closet ? 1.45 : 1.55;
-    camera.position.set(cx + Math.sin(perfT * 0.1) * 0.12, cyy, cz);
-    camera.lookAt(closet ? 0.55 : 1.25, closet ? 1.05 : 1.0, 7.6);
+    const M = W.menu; const c = closet ? M.camC : M.cam, lk = closet ? M.lookC : M.look;
+    camera.position.set(c[0] + Math.sin(perfT * 0.1) * 0.12, c[1], c[2]);
+    camera.lookAt(lk[0], lk[1], lk[2]);
     camera.fov = 50; camera.updateProjectionMatrix();
-    if (app.net) { camera.position.set(Math.sin(perfT * 0.05) * 30, 16, Math.cos(perfT * 0.05) * 30); camera.lookAt(0, 0, 0); camera.fov = 55; camera.updateProjectionMatrix(); }
+    if (app.net) { const O = W.orbit; camera.position.set(O.cx + Math.sin(perfT * 0.05) * O.r, O.h, O.cz + Math.cos(perfT * 0.05) * O.r); camera.lookAt(O.cx, O.ly, O.cz); camera.fov = 55; camera.updateProjectionMatrix(); }
     app.setDark(0);
   }
   if (screenName === 'results' && podium) {
     podium.chars.forEach((c) => c.update(dt, c.podAnim, 0, perfT, { danceOffset: 0 }));
-    camera.position.set(Math.sin(perfT * 0.3) * 1.0 - 0.6, 3.4, 10.6); camera.lookAt(-1.0, 2.5, 17.2); camera.fov = 50; camera.updateProjectionMatrix();
+    const PD = W.podium; const cr = Math.cos(PD.ry), sr = Math.sin(PD.ry);
+    const off = (lx, ly, lz) => [PD.x + lx * cr + lz * sr, PD.y + ly, PD.z - lx * sr + lz * cr];
+    const cp = off(0.6 + Math.sin(perfT * 0.3), 2.15, 6.6), lp = off(1.0, 1.25, 0);
+    camera.position.set(cp[0], cp[1], cp[2]); camera.lookAt(lp[0], lp[1], lp[2]); camera.fov = 50; camera.updateProjectionMatrix();
     fx.update(perfT, dt);
   }
   if (composer && settings.quality === 'alta') composer.render(dt); else renderer.render(scene, camera);
@@ -884,7 +929,17 @@ function loop() {
     }
   }
   if (Q.get('test')) window.__frames = (window.__frames || 0) + 1;
+  // resolución dinámica durante la partida
+  if (screenName === 'hud') {
+    perf.n++; perf.t += dt;
+    if (perf.t > 2) {
+      const fps = perf.n / perf.t; perf.n = 0; perf.t = 0;
+      if (fps < 38 && dynRes > 0.6) { dynRes = Math.max(0.6, dynRes - 0.1); perf.good = 0; resize(); }
+      else if (fps > 56 && dynRes < 1) { if (++perf.good >= 3) { dynRes = Math.min(1, dynRes + 0.1); perf.good = 0; resize(); } }
+    }
+  }
 }
+const perf = { n: 0, t: 0, good: 0 };
 function onPhase(G, prev) {
   if (G.ph === 'lobby') {
     if (game) game.stop();
@@ -894,7 +949,7 @@ function onPhase(G, prev) {
   } else if (G.ph === 'play') {
     if (!G.pl[app.net.myId]) { $('lNote').textContent = 'La partida ya empezó. Entrás en la próxima.'; return; }
     closeSheet('lobby'); show('hud');
-    game.startMatch();
+    if (!mapPending && (!G.cfg.map || G.cfg.map === W.id)) game.startMatch();
   } else if (G.ph === 'end') {
     if (game) game.stop();
     app.showHud(false); closeSheet('sPause');

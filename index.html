@@ -70,6 +70,7 @@ input{font-family:inherit;user-select:text;-webkit-user-select:text}
 .seg{display:flex;gap:4px;background:rgba(0,0,0,.28);padding:4px;border-radius:13px}
 .seg button{flex:1;padding:8px 10px;border-radius:10px;font-weight:800;font-size:14px;color:var(--muted)}
 .seg button.on{background:var(--cream);color:var(--ink)}
+.mapSeg{width:230px}.mapSeg button{white-space:nowrap}
 .fld{display:flex;flex-direction:column;gap:5px;margin-top:12px}
 .fld label{font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.02em}
 .fld input,.fld select{background:rgba(0,0,0,.28);border:1.5px solid var(--line);border-radius:12px;padding:11px 12px;color:var(--cream);font-size:16px;outline:0}
@@ -296,6 +297,9 @@ body.touch .keypad{right:calc(226px + var(--safe-r))}
 .itemCard b{font-family:var(--display);font-weight:400;font-size:24px;color:var(--mustard)}
 .itemCard p{margin:3px 0 4px;font-size:14px;line-height:1.35}
 .itemCard small{opacity:.7;font-size:11.5px}
+.snap{position:absolute;left:calc(10px + var(--safe-l));top:calc(96px + var(--safe-t));width:min(220px,30vw);background:var(--paper);padding:6px 6px 4px;border-radius:6px;box-shadow:0 10px 26px rgba(0,0,0,.45);transform:rotate(-4deg) scale(.6);opacity:0;pointer-events:none;transition:all .25s;display:flex;flex-direction:column;gap:3px;color:var(--ink);font-size:11px;font-weight:800}
+.snap.on{opacity:1;transform:rotate(-4deg) scale(1);pointer-events:auto}
+.snap img{width:100%;border-radius:3px;display:block}
 .photoView{position:absolute;inset:0;background:rgba(10,4,14,.94);display:none;flex-direction:column;align-items:center;justify-content:center;pointer-events:auto;z-index:5}
 .photoView.on{display:flex}
 .phBox{width:min(92vw,1000px);height:72vh;overflow:auto;border-radius:14px;border:3px solid var(--paper);background:#000;touch-action:pan-x pan-y}
@@ -400,7 +404,8 @@ body.touch .keypad{right:calc(226px + var(--safe-r))}
     </div>
     <div data-p="create" class="hidden">
       <div class="fld"><label for="cName">Nombre de la sala</label><input id="cName" maxlength="30" placeholder="La sala de…"></div>
-      <div class="sec"><div class="row"><div class="l">Modo</div><div class="seg" id="cMode" style="width:230px"><button data-v="ffa" class="on">Todos contra todos</button><button data-v="teams">Equipos</button></div></div>
+      <div class="sec"><div class="row"><div class="l">Mapa</div><div class="seg mapSeg" id="cMap"></div></div>
+      <div class="row"><div class="l">Modo</div><div class="seg" id="cMode" style="width:230px"><button data-v="ffa" class="on">Todos contra todos</button><button data-v="teams">Equipos</button></div></div>
       <div class="row"><div class="l">Jugadores<small>máximo</small></div><div class="stepper"><button data-s="max" data-d="-1">−</button><output id="cMax">6</output><button data-s="max" data-d="1">+</button></div></div>
       <div class="row"><div class="l">Duración</div><div class="seg" id="cDur"><button data-v="180">3 min</button><button data-v="300" class="on">5</button><button data-v="480">8</button><button data-v="600">10</button></div></div>
       <div class="row"><div class="l">Vidas</div><div class="stepper"><button data-s="lives" data-d="-1">−</button><output id="cLives">3</output><button data-s="lives" data-d="1">+</button></div></div>
@@ -416,7 +421,8 @@ body.touch .keypad{right:calc(226px + var(--safe-r))}
     </div>
     <div data-p="practice" class="hidden">
       <p style="color:var(--muted);margin:10px 0 0">Jugá contra bots para practicar. No da gemas.</p>
-      <div class="sec"><div class="row"><div class="l">Bots</div><div class="stepper"><button data-b="-1">−</button><output id="pBots">3</output><button data-b="1">+</button></div></div>
+      <div class="sec"><div class="row"><div class="l">Mapa</div><div class="seg mapSeg" id="pMap"></div></div>
+      <div class="row"><div class="l">Bots</div><div class="stepper"><button data-b="-1">−</button><output id="pBots">3</output><button data-b="1">+</button></div></div>
       <div class="row"><div class="l">Tutorial guiado</div><button class="toggle on" id="pTut" aria-label="Tutorial"></button></div></div>
       <button class="btn teal block" id="bPracticeGo" style="margin-top:14px">Practicar</button>
     </div>
@@ -511,6 +517,7 @@ body.touch .keypad{right:calc(226px + var(--safe-r))}
       <div class="codebig" id="lCode">····</div>
       <div style="display:flex;gap:8px;margin:8px 0 12px;flex-wrap:wrap"><button class="chip" id="bCopy">Copiar código</button><button class="chip" id="bShare">Compartir</button></div>
       <div id="hostCfg">
+        <div class="row"><div class="l">Mapa</div><div class="seg mapSeg" id="lMap"></div></div>
         <div class="row"><div class="l">Modo</div><div class="seg" id="lMode" style="width:210px"><button data-v="ffa">Todos</button><button data-v="teams">Equipos</button></div></div>
         <div class="row"><div class="l">Jugadores</div><div class="stepper"><button data-l="max" data-d="-1">−</button><output id="lMax">6</output><button data-l="max" data-d="1">+</button></div></div>
         <div class="row"><div class="l">Duración</div><div class="seg" id="lDur"><button data-v="180">3</button><button data-v="300">5</button><button data-v="480">8</button><button data-v="600">10</button></div></div>

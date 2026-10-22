@@ -1,7 +1,8 @@
 // La feria: mapa, iluminación, cielo, colisiones y red de caminos
 import * as THREE from 'three';
 import { mergeGeometries, deinterleaveGeometry } from 'three/addons/utils/BufferGeometryUtils.js';
-import { charMaterial, Character } from './character.js';
+import { Character } from './character.js';
+import { worldMaterial } from './maps/kit.js';
 import { Phys, buildNav } from './phys.js';
 import { COLORS, randomLook } from './look.js';
 import { mulberry32, pick, shuffle } from './util.js';
@@ -229,7 +230,7 @@ export const BOUNDS = { x0: -30, x1: 30, z0: -22, z1: 22 };
 export function buildWorld(scene, gltf) {
   const W = { booths: [], stallFronts: [], spawns: [], itemSpots: [], mannequinSpots: [], anim: [], pois: [] };
   const rng = mulberry32(2026);
-  const mat = charMaterial();
+  const mat = worldMaterial([0, 1.5, 3.2]);
   const B = new Batch();
   const F = new FloorBatch();
   const P = new Phys(BOUNDS);

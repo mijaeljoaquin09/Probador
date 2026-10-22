@@ -13,7 +13,7 @@ const AI = Object.fromEntries(ANIMS.map((a, i) => [a, i]));
 const $ = (id) => document.getElementById(id);
 const HEART = '<svg viewBox="0 0 120 70" fill="none" stroke="#ffc93c" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"><path d="M60 22c0-8 10-8 10-15S64 0 60 0s-8 3-8 7"/><path d="M60 22 8 56c-6 4-3 10 4 10h96c7 0 10-6 4-10L60 22Z"/></svg>';
 const GRAV = 18, JUMP_V = 6.4, SUPER_V = 12.5;
-const READ = 15, READ_ZOOM = 48, READ_FAR = 70, SHOW_MAX = 40;
+const READ = 9, READ_ZOOM = 30, READ_FAR = 40, READ_DARK = 13, SHOW_MAX = 30;
 
 const TUT = [
   { txt: '👋 <b>¡Bienvenida!</b> Mové el joystick de la izquierda para caminar.', desk: '👋 <b>¡Bienvenida!</b> Caminá con <b>W A S D</b>.', check: (g) => g.tutData.walked > 4 },
@@ -242,8 +242,8 @@ export class GameClient {
     const slip = q.st.sl > t;
     const facing = slip ? 1 : (dx * Math.sin(c.ry) + dz * Math.cos(c.ry)) / (Math.hypot(dx, dz) || 1);
     const liq = G.fx.liq && t < G.fx.liq[1]; const apa = G.fx.apa && t < G.fx.apa[1];
-    const range = (liq || this.photoMode) ? READ_FAR : this.zoomOn(t) ? READ_ZOOM : apa ? 25 : READ;
-    if (d > range || facing < 0.05) return 'blur';
+    const range = (liq || this.photoMode) ? READ_FAR : this.zoomOn(t) ? READ_ZOOM : apa ? READ_DARK : READ;
+    if (d > range || facing < 0.3) return 'blur';
     return liq || apa ? 'glow' : 'ok';
   }
   zoomOn(t) { const p = this.myP(); return this.zoom && p && p.st && p.st.bi > t; }
@@ -259,9 +259,18 @@ export class GameClient {
       const isMe = q.pid === this.myId;
       if (isMe) { c.x = q.x; c.y = q.y; c.z = q.z; c.ry = q.ry; }
       else {
-        const k = 1 - Math.exp(-dt * 12);
-        if (Math.hypot(q.x - c.x, q.z - c.z) > 4 || Math.abs(q.y - c.y) > 3) { c.x = q.x; c.z = q.z; c.y = q.y; }
-        c.x += (q.x - c.x) * k; c.z += (q.z - c.z) * k; c.y += (q.y - c.y) * k; c.ry = lerpAng(c.ry, q.ry, k);
+        // predicción suave: estimamos la velocidad con las últimas muestras y avanzamos un poco
+        const now = performance.now();
+        if (c.sx !== q.x || c.sz !== q.z || c.sy !== q.y) {
+          if (c.st) { const dtS = Math.max(0.03, Math.min(0.5, (now - c.st) / 1000)); let vx = (q.x - c.sx) / dtS, vz = (q.z - c.sz) / dtS; const sp = Math.hypot(vx, vz); if (sp > 10) { vx *= 10 / sp; vz *= 10 / sp; } c.vx = (c.vx || 0) * 0.35 + vx * 0.65; c.vz = (c.vz || 0) * 0.35 + vz * 0.65; }
+          c.sx = q.x; c.sz = q.z; c.sy = q.y; c.st = now;
+        }
+        const age = Math.min(0.22, (now - (c.st || now)) / 1000);
+        const moving = q.a === 1 || q.a === 2;
+        const px = q.x + (moving ? (c.vx || 0) * age : 0), pz = q.z + (moving ? (c.vz || 0) * age : 0);
+        if (Math.hypot(px - c.x, pz - c.z) > 4 || Math.abs(q.y - c.y) > 3) { c.x = px; c.z = pz; c.y = q.y; }
+        const k = 1 - Math.exp(-dt * 16);
+        c.x += (px - c.x) * k; c.z += (pz - c.z) * k; c.y += (q.y - c.y) * (1 - Math.exp(-dt * 12)); c.ry = lerpAng(c.ry, q.ry, 1 - Math.exp(-dt * 14));
       }
       if (q.p.lk !== c.key) { c.key = q.p.lk; c.ch.setLook(look, false); }
       const inBox = q.st.bx > t && !q.hidden;
@@ -281,7 +290,7 @@ export class GameClient {
           c.ch.setTag(tagMaterial(q.p.num || '000', q.p.ts, q.p.tm || '', c.read === 'ok' ? '' : c.read));
           // de lejos el cartel se agranda para que se pueda leer en el celular
           const cp = this.app.camera.position; const dcam = Math.hypot(cp.x - c.x, cp.y - c.y - 1.6, cp.z - c.z);
-          c.ch.tag.scale.setScalar(this.zoomOn(t) ? 1.3 : clamp(dcam / 4.2, 1, 2.3));
+          c.ch.tag.scale.setScalar(this.zoomOn(t) ? 1.1 : clamp(dcam / 6, 1, 1.45));
         }
         if (c.read === 'ok' || c.read === 'glow') readSomeone = true;
       }
@@ -460,10 +469,17 @@ export class GameClient {
   afterRender(canvas) {
     if (this.photoShoot) {
       this.photoShoot = false;
-      try { const url = canvas.toDataURL('image/jpeg', 0.85); this.photos.push(url); if (this.photos.length > 6) this.photos.shift(); this.renderPhotos(); this.app.fx.flashAt(this.me.x, this.me.y + 1.5, this.me.z, this.gt()); } catch (e) { }
+      try { const url = canvas.toDataURL('image/jpeg', 0.85); this.photos.push(url); if (this.photos.length > 6) this.photos.shift(); this.renderPhotos(); this.showSnap(url); this.app.fx.flashAt(this.me.x, this.me.y + 1.5, this.me.z, this.gt()); } catch (e) { }
       this.photoMode = false; for (const [, c] of this.chars) c.read = undefined;
     }
     if (this.photoReq) { this.photoReq = false; this.photoShoot = true; this.readT = 0; this.photoMode = true; for (const [, c] of this.chars) c.read = undefined; }
+  }
+  // la foto recién sacada aparece unos segundos; tocándola se abre en grande
+  showSnap(url) {
+    let el = $('snap');
+    if (!el) { el = document.createElement('button'); el.id = 'snap'; el.className = 'snap pe'; el.innerHTML = '<img alt="Foto"><span>Tocá para ver con zoom</span>'; $('hud').appendChild(el); el.addEventListener('pointerdown', (e) => { e.preventDefault(); el.classList.remove('on'); this.openPhotos(); }); }
+    el.querySelector('img').src = url; el.classList.remove('on'); void el.offsetWidth; el.classList.add('on');
+    clearTimeout(this._snapT); this._snapT = setTimeout(() => el.classList.remove('on'), 5000);
   }
   renderPhotos() { const b = $('bPhotos'); b.classList.toggle('hidden', !this.photos.length); b.querySelector('b').textContent = this.photos.length; }
   openPhotos() { if (!this.photos.length) return; this.photoIdx = this.photos.length - 1; this.phZ = 1; $('photoView').classList.add('on'); this.showPhoto(); }

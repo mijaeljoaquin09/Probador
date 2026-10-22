@@ -6,7 +6,7 @@ import { COLORS, TOPS, BOTS, HAIR_COLORS, SKINS, L } from './look.js';
 let SHARED_MAT = null;
 export function charMaterial() {
   if (SHARED_MAT) return SHARED_MAT;
-  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.72, metalness: 0.0 });
+  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.72, metalness: 0.0, envMapIntensity: 0.55 });
   m.onBeforeCompile = (sh) => {
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nattribute float pat;\nvarying float vPat;\nvarying vec3 vLocal;')

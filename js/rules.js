@@ -19,7 +19,7 @@ export const ITEMS = {
 };
 export const ITEM_POOL = Object.keys(ITEMS);
 export const ITEM_KEYS = ITEM_POOL;
-export const CFG = { RESPAWN: 3, HIT: 100, WRONG: 25, BONUS: 0, RANGE: 40, RANGE_BIN: 75, BOOTH_T: 3, ITEMS_ON_GROUND: 10 };
+export const CFG = { RESPAWN: 3, HIT: 100, WRONG: 25, BONUS: 0, RANGE: 16, RANGE_BIN: 45, BOOTH_T: 3, ITEMS_ON_GROUND: 10 };
 
 export const lookStr = (l) => l.map((v) => v.toString(36)).join('');
 export const parseLook = (s) => (s ? [...s].map((c) => parseInt(c, 36)) : null);
@@ -252,7 +252,7 @@ export class HostRules {
         const qp = this.posOf(q, peers); if (!qp) continue;
         const dx = b.x - qp.x, dz = b.z - qp.z; const d = Math.hypot(dx, dz);
         const facing = (dx * Math.sin(qp.ry || 0) + dz * Math.cos(qp.ry || 0)) / (d || 1);
-        if (d < 12 && facing > 0.3 && this.canSee(b, qp, 14)) { b.seen[q] = (b.seen[q] || 0) + 0.4; b.ry = Math.atan2(qp.x - b.x, qp.z - b.z); }
+        if (d < 8 && facing > 0.4 && this.canSee(b, qp, 10)) { b.seen[q] = (b.seen[q] || 0) + 0.4; b.ry = Math.atan2(qp.x - b.x, qp.z - b.z); }
         else b.seen[q] = Math.max(0, (b.seen[q] || 0) - 0.2);
         if (b.seen[q] > 2.6 + this.rng() * 3 && !(st.cd > t)) {
           b.seen[q] = 0;
