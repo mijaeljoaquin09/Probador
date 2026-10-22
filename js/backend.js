@@ -13,6 +13,8 @@ const ERR = {
   'Password should be at least 6 characters.': 'La contraseña tiene que tener al menos 6 caracteres.',
   'Unable to validate email address: invalid format': 'Ese email no es válido.',
   'For security purposes, you can only request this after': 'Esperá un minuto y probá de nuevo.',
+  'signups are disabled': 'Por ahora no se pueden crear cuentas nuevas. Avisale a la administradora.',
+  'logins are disabled': 'Por ahora no se puede entrar con email. Avisale a la administradora.',
 };
 export function niceError(e) {
   const m = (e && (e.message || e.error_description || e.msg)) || String(e);
