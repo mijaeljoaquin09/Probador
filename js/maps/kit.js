@@ -8,31 +8,75 @@ import { COLORS, randomLook } from '../look.js';
 import { mulberry32, pick, shuffle } from '../util.js';
 
 // patrones de superficie (atributo 'pat')
-export const PAT = { PLAIN: 0, STRIPE: 1, DOTS: 2, CHECK: 3, AWN: 4, WOOD: 5, PLASTER: 6, TILE: 7, FABRIC: 8, METAL: 9, MARBLE: 10, GLOW: 11, CARPET: 12, BIGTILE: 13 };
+export const PAT = { PLAIN: 0, STRIPE: 1, DOTS: 2, CHECK: 3, AWN: 4, WOOD: 5, PLASTER: 6, TILE: 7, FABRIC: 8, METAL: 9, MARBLE: 10, GLOW: 11, CARPET: 12, BIGTILE: 13, BRICK: 14, HWOOD: 15, GRASS: 16, PAVER: 17 };
+// texturas fotográficas (libres) para ladrillo, parquet y pasto
+let PHOTO = null;
+function photoTextures() {
+  if (PHOTO) return PHOTO;
+  const L = new THREE.TextureLoader(); const ld = (f) => { const t = L.load(new URL('../../assets/tex/' + f, import.meta.url).href); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t; };
+  PHOTO = { brick: ld('brick.jpg'), wood: ld('wood.jpg'), grass: ld('grass.jpg') };
+  return PHOTO;
+}
 
-// material del mundo: colores por vértice + texturas procedurales en coordenadas del mundo
-// (madera, revoque, baldosas, tela, metal, mármol), brillo distinto según el material y sombra suave al pie de las paredes
+// ---- texturas livianas generadas una sola vez (en vez de calcular ruido en cada píxel) ----
+// texA: R=grano fino · G=tablas de madera · B=baldosas 0.6 · A=baldosas grandes
+// texB: R=trama de tela · G=metal cepillado · B=vetas de mármol · A=alfombra
+let DETAIL = null;
+function detailTextures() {
+  if (DETAIL) return DETAIL;
+  const N = 256;
+  const hash = (x, y, s) => { let h = (x * 374761393 + y * 668265263 + s * 2147483647) | 0; h = (h ^ (h >>> 13)) * 1274126177; return ((h ^ (h >>> 16)) >>> 0) / 4294967295; };
+  // ruido continuo repetible (periodo p)
+  const vn = (x, y, p, s) => { const xi = Math.floor(x), yi = Math.floor(y); const fx = x - xi, fy = y - yi; const u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy); const g = (i, j) => hash(((i % p) + p) % p, ((j % p) + p) % p, s); return (g(xi, yi) * (1 - u) + g(xi + 1, yi) * u) * (1 - v) + (g(xi, yi + 1) * (1 - u) + g(xi + 1, yi + 1) * u) * v; };
+  const fbm = (x, y, p, s, o = 4) => { let a = 0.5, t = 0, f = 1; for (let i = 0; i < o; i++) { t += a * vn(x * f, y * f, p * f, s + i); f *= 2; a *= 0.5; } return t / 0.9375; };
+  const A = new Uint8Array(N * N * 4), Bt = new Uint8Array(N * N * 4);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const u = x / N, v = y / N, i = (y * N + x) * 4;
+    // grano: textura de revoque suave
+    const grain = 0.55 * fbm(u * 4, v * 4, 4, 1) + 0.45 * fbm(u * 32, v * 32, 32, 2, 3);
+    // madera: 5 tablas por tile, vetas a lo largo de x
+    const row = Math.floor(v * 5), off = hash(row, 7, 3) * 0.7, pv = (v * 5) % 1;
+    const plank = Math.floor(((u + off) % 1) * 1.0);
+    const tone = 0.78 + 0.3 * hash(row, plank, 5);
+    const vein = fbm(((u + off) % 1) * 3, v * 60, 3, 9, 3);
+    const seam = Math.min(1, pv / 0.04, (1 - pv) / 0.04) * Math.min(1, (((u + off) % 1) / 0.006));
+    const wood = Math.max(0, Math.min(1, tone * (0.78 + 0.32 * vein) * (0.45 + 0.55 * seam)));
+    // baldosas: 4x4 por tile (0.6 m si el tile mide 2.4)
+    const tl = (n, gw) => { const fx = (u * n) % 1, fy = (v * n) % 1; const id = Math.floor(u * n) * 31 + Math.floor(v * n); const grout = Math.min(1, fx / gw, (1 - fx) / gw, fy / gw, (1 - fy) / gw); return grout < 1 ? 0.35 + grout * 0.3 : 0.86 + 0.14 * hash(id, 1, 11) + 0.06 * (fbm(u * 8, v * 8, 8, 12) - 0.5); };
+    A[i] = grain * 255; A[i + 1] = wood * 255; A[i + 2] = Math.min(1, tl(4, 0.05)) * 255; A[i + 3] = Math.min(1, tl(2, 0.018)) * 255;
+    // tela, metal, mármol, alfombra
+    const weave = 0.82 + 0.1 * Math.sin(u * N * Math.PI * 0.5) * Math.sin(v * N * Math.PI * 0.5) + 0.16 * (fbm(u * 8, v * 8, 8, 21) - 0.5);
+    const brushed = 0.75 + 0.3 * fbm(u * 2, v * 96, 2, 31, 3);
+    const mv = fbm(u * 3, v * 3, 3, 41); const mvein = Math.pow(Math.abs(Math.sin((u + v * 0.6) * Math.PI * 4 + mv * 9)), 18);
+    const marble = Math.max(0, 0.95 + 0.08 * mv - 0.5 * mvein);
+    const carpet = 0.78 + 0.32 * fbm(u * 64, v * 64, 64, 51, 2);
+    Bt[i] = Math.min(1, weave) * 255; Bt[i + 1] = Math.min(1, brushed) * 255; Bt[i + 2] = Math.min(1, marble) * 255; Bt[i + 3] = Math.min(1, carpet) * 255;
+  }
+  const mk = (data) => { const t = new THREE.DataTexture(data, N, N, THREE.RGBAFormat); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = 4; t.needsUpdate = true; return t; };
+  DETAIL = { a: mk(A), b: mk(Bt) };
+  return DETAIL;
+}
+
+// material del mundo: colores por vértice + detalle de superficie según el patrón (madera, mármol, baldosas, tela, metal…)
 export function worldMaterial(levels = [0, 99, 99]) {
-  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, metalness: 0.0, envMapIntensity: 0.7 });
+  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, metalness: 0.0, envMapIntensity: 0.6 });
   const lv = levels.slice(0, 3); while (lv.length < 3) lv.push(99);
+  const D = detailTextures(); const PH = photoTextures();
   m.onBeforeCompile = (sh) => {
-    sh.uniforms.uLevels = { value: lv };
+    sh.uniforms.uLevels = { value: lv }; sh.uniforms.tDA = { value: D.a }; sh.uniforms.tDB = { value: D.b }; sh.uniforms.tBrick = { value: PH.brick }; sh.uniforms.tWood = { value: PH.wood }; sh.uniforms.tGrass = { value: PH.grass };
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nattribute float pat;\nvarying float vPat;\nvarying vec3 vW;\nvarying vec3 vWN;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvPat = pat;\nvW = position;\nvWN = normal;');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', `#include <common>
-varying float vPat; varying vec3 vW; varying vec3 vWN; uniform float uLevels[3];
-float wh21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
-float wvn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(wh21(i), wh21(i + vec2(1, 0)), f.x), mix(wh21(i + vec2(0, 1)), wh21(i + vec2(1, 1)), f.x), f.y); }
-float wfbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 4; i++) { v += a * wvn(p); p *= 2.07; a *= 0.5; } return v; }`)
+      .replace('#include <common>', '#include <common>\nvarying float vPat; varying vec3 vW; varying vec3 vWN; uniform float uLevels[3]; uniform sampler2D tDA; uniform sampler2D tDB; uniform sampler2D tBrick; uniform sampler2D tWood; uniform sampler2D tGrass;')
       .replace('#include <color_fragment>', `#include <color_fragment>
       float wRough = -1.0; float wMetal = -1.0; vec3 wEmis = vec3(0.0);
       {
         vec3 base = diffuseColor.rgb; float p = vPat;
         vec3 an = abs(vWN);
         vec2 uvw = an.y > 0.5 ? vW.xz : (an.x > an.z ? vW.zy : vW.xy);
-        if (p > 0.5 && p < 4.5) {
+        if (p < 0.5) { base *= 0.9 + 0.16 * texture2D(tDA, uvw * 0.35).r; wRough = 0.8; }
+        else if (p < 4.5) {
           float lum = dot(base, vec3(0.299, 0.587, 0.114));
           vec3 alt = lum > 0.55 ? base * 0.45 : mix(base, vec3(1.0), 0.6);
           float mm = 0.0;
@@ -40,39 +84,23 @@ float wfbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 4; i++) { v += a
           else if (p < 2.5) { vec3 q = fract(vW * 11.0) - 0.5; mm = 1.0 - step(0.2, length(q)); }
           else if (p < 3.5) { float a = step(0.5, fract(uvw.x * 4.0)); float b = step(0.5, fract(uvw.y * 4.0)); mm = abs(a - b) * 0.8; }
           else { alt = mix(base, vec3(1.0), 0.88); mm = step(0.5, fract(vW.x * 1.6 + vW.z * 1.6)); }
-          base = mix(base, alt, mm) * (0.94 + 0.1 * wfbm(uvw * 3.0)); wRough = 0.75;
-        } else if (p > 4.5 && p < 5.5) { // madera (tablas)
-          vec2 q = uvw; float row = floor(q.y / 0.21); float off = wh21(vec2(row, 3.0)) * 7.0;
-          float plank = floor((q.x + off) / 1.7);
-          float tone = 0.82 + 0.3 * wh21(vec2(row, plank));
-          float grain = wfbm(vec2((q.x + off) * 1.4, q.y * 30.0));
-          float seam = smoothstep(0.0, 0.03, fract(q.y / 0.21)) * smoothstep(0.0, 0.012, fract((q.x + off) / 1.7));
-          base = base * tone * (0.8 + 0.34 * grain) * mix(0.5, 1.0, seam); wRough = 0.5;
-        } else if (p < 6.5) { // revoque
-          float n = wfbm(uvw * 1.1) * 0.6 + wfbm(uvw * 11.0) * 0.4; base *= 0.86 + 0.22 * n; wRough = 0.93;
-        } else if (p < 7.5 || (p > 12.5 && p < 13.5)) { // baldosas
-          float sz = p > 12.5 ? 1.2 : 0.6;
-          vec2 g = uvw / sz; vec2 f = fract(g); vec2 id = floor(g);
-          float gw = p > 12.5 ? 0.012 : 0.03;
-          float grout = smoothstep(0.0, gw, f.x) * smoothstep(0.0, gw, f.y) * smoothstep(1.0, 1.0 - gw, f.x) * smoothstep(1.0, 1.0 - gw, f.y);
-          float tint = 0.9 + 0.16 * wh21(id);
-          base = mix(base * 0.55, base * tint * (0.93 + 0.1 * wfbm(uvw * 5.0)), grout); wRough = mix(0.85, 0.22, grout);
-        } else if (p < 8.5) { // tela
-          float w = sin(uvw.x * 240.0) * sin(uvw.y * 240.0); base *= 0.9 + 0.08 * w + 0.16 * (wfbm(uvw * 4.0) - 0.5); wRough = 1.0;
-        } else if (p < 9.5) { // metal cepillado
-          float s = wfbm(vec2(uvw.x * 2.0, uvw.y * 80.0)); base *= 0.82 + 0.3 * s; wRough = 0.3; wMetal = 0.8;
-        } else if (p < 10.5) { // mármol
-          float v = wfbm(uvw * 0.8); float vein = smoothstep(0.9, 1.0, abs(sin((uvw.x + uvw.y * 0.6) * 1.8 + v * 9.0)));
-          base = mix(base * (0.94 + 0.1 * v), base * 0.5, vein * 0.75); wRough = 0.14;
-        } else if (p < 11.5) { // luz
-          wEmis = base * 1.6; wRough = 0.5;
-        } else if (p < 12.5) { // alfombra
-          base *= 0.82 + 0.3 * wfbm(uvw * 16.0); wRough = 1.0;
-        } else {
-          base *= 0.93 + 0.12 * wfbm(uvw * 2.5);
+          base = mix(base, alt, mm) * (0.92 + 0.12 * texture2D(tDB, uvw * 0.6).r); wRough = 0.85;
         }
-        // sombra al pie de las paredes
-        if (an.y < 0.5) { float ao = 1.0; for (int i = 0; i < 3; i++) { float d = vW.y - uLevels[i]; if (d > -0.02 && d < 1.3) ao = min(ao, mix(0.58, 1.0, smoothstep(0.0, 1.2, d))); } base *= ao; }
+        else if (p < 5.5) { base *= 0.25 + 0.9 * texture2D(tDA, uvw / vec2(3.4, 1.05)).g; wRough = 0.55; }
+        else if (p < 6.5) { base *= 0.84 + 0.24 * texture2D(tDA, uvw * 0.25).r; wRough = 0.92; }
+        else if (p < 7.5) { float t = texture2D(tDA, uvw / 2.4).b; base *= t; wRough = t < 0.7 ? 0.9 : 0.3; }
+        else if (p < 8.5) { base *= texture2D(tDB, uvw * 2.0).r; wRough = 1.0; }
+        else if (p < 9.5) { base *= texture2D(tDB, uvw * 0.8).g; wRough = 0.32; wMetal = 0.75; }
+        else if (p < 10.5) { base *= texture2D(tDB, uvw * 0.22).b; wRough = 0.18; }
+        else if (p < 11.5) { wEmis = base * 1.4; wRough = 0.5; }
+        else if (p < 12.5) { base *= texture2D(tDB, uvw * 0.5).a; wRough = 1.0; }
+        else if (p < 13.5) { float t = texture2D(tDA, uvw / 2.4).a; base *= t; wRough = t < 0.7 ? 0.9 : 0.25; }
+        else if (p < 14.5) { base *= texture2D(tBrick, uvw / 2.2).rgb * 1.25; wRough = 0.88; }
+        else if (p < 15.5) { base *= texture2D(tWood, uvw / vec2(4.0, 2.0)).rgb * 1.35; wRough = 0.42; }
+        else if (p < 16.5) { vec3 g1 = texture2D(tGrass, uvw / 5.0).rgb; vec3 g2 = texture2D(tGrass, uvw / 23.0).rgb; base *= mix(g1, g2, 0.45) * 1.5; wRough = 1.0; }
+        else { vec2 g = uvw / vec2(0.4, 0.2); g.x += step(1.0, mod(g.y, 2.0)) * 0.5; vec2 f = fract(g); float e = smoothstep(0.0, 0.06, f.x) * smoothstep(0.0, 0.12, f.y) * smoothstep(1.0, 0.94, f.x) * smoothstep(1.0, 0.88, f.y); float tint = 0.88 + 0.18 * texture2D(tDA, floor(g) * 0.137).r; base *= mix(0.55, tint * (0.9 + 0.12 * texture2D(tDA, uvw * 0.7).r), e); wRough = 0.85; }
+        // sombra suave al pie de las paredes
+        if (an.y < 0.5) { float ao = 1.0; for (int i = 0; i < 3; i++) { float d = vW.y - uLevels[i]; if (d > -0.02 && d < 1.0) ao = min(ao, mix(0.62, 1.0, smoothstep(0.0, 0.9, d))); } base *= ao; }
         diffuseColor.rgb = base;
       }`)
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nif (wRough >= 0.0) roughnessFactor = wRough;')
@@ -182,12 +210,12 @@ export function makeKit(root, gltf, opts) {
   const bounds = opts.bounds;
   const W = { booths: [], stallFronts: [], spawns: [], itemSpots: [], mannequinSpots: [], anim: [], pois: [], root, bounds };
   const rng = mulberry32(opts.seed || 2026);
-  const B = new Batch(); const NB = new Batch(); // NB: no proyecta sombra (losas, techos)
+  const B = new Batch(); const NB = new Batch(); const GB = new Batch(); // NB: no proyecta sombra (losas, techos) · GB: vidrios
   const P = new Phys(bounds); W.P = P;
   const G = {
     box: new THREE.BoxGeometry(1, 1, 1), cyl: new THREE.CylinderGeometry(1, 1, 1, 14), cyl24: new THREE.CylinderGeometry(1, 1, 1, 28),
     sphere: new THREE.SphereGeometry(1, 14, 10), cone: new THREE.ConeGeometry(1, 1, 3), cone8: new THREE.ConeGeometry(1, 1, 10), pyr: new THREE.ConeGeometry(1, 1, 4, 1), ico: new THREE.IcosahedronGeometry(1, 1),
-    rbox: new THREE.CapsuleGeometry(0.5, 1, 3, 8),
+    rbox: new THREE.CapsuleGeometry(0.5, 1, 3, 8), torus: new THREE.TorusGeometry(1, 0.045, 8, 40),
   };
   const bulbs = [];
   const solid = (x0, x1, y0, y1, z0, z1, color, pat = 0, flags = {}) => {
@@ -371,9 +399,23 @@ export function makeKit(root, gltf, opts) {
       if (dir === '-z') { bz0 = z0 - b; bz1 = z0 - a; bx0 = x0 - w / 2; bx1 = x0 + w / 2; }
       solid(bx0, bx1, y0, top, bz0, bz1, i % 2 ? color : new THREE.Color(color).multiplyScalar(0.94).getHex(), pat);
       box((bx0 + bx1) / 2, top + 0.006, (bz0 + bz1) / 2, bx1 - bx0, 0.012, bz1 - bz0, i === n ? 0xffc93c : new THREE.Color(color).multiplyScalar(0.97).getHex(), pat, 0, true);
-      if (rails) {
-        if (dir.includes('x')) { for (const zz of [bz0, bz1]) solid(bx0, bx1, top, top + 0.95, zz - 0.04, zz + 0.04, 0x9aa0a8, PAT.METAL, { floor: false, cam: false }); }
-        else { for (const xx of [bx0, bx1]) solid(xx - 0.04, xx + 0.04, top, top + 0.95, bz0, bz1, 0x9aa0a8, PAT.METAL, { floor: false, cam: false }); }
+      // baranda: colisión invisible por escalón (sin sobresalir del piso de arriba)
+      if (rails && i < n) {
+        if (dir.includes('x')) { for (const zz of [bz0, bz1]) P.add(bx0, bx1, top, top + 0.95, zz - 0.05, zz + 0.05, { floor: false, cam: false }); }
+        else { for (const xx of [bx0, bx1]) P.add(xx - 0.05, xx + 0.05, top, top + 0.95, bz0, bz1, { floor: false, cam: false }); }
+      }
+    }
+    // pasamanos inclinado continuo + postes
+    if (rails) {
+      const run = n * sd; const ang = Math.atan2(h, run); const len = Math.hypot(run, h);
+      const sx = dir === '+x' ? 1 : dir === '-x' ? -1 : 0, sz = dir === '+z' ? 1 : dir === '-z' ? -1 : 0;
+      for (const side of [-1, 1]) {
+        const ox = sx ? 0 : side * w / 2, oz = sz ? 0 : side * w / 2;
+        const cx = x0 + sx * run / 2 + ox, cz = z0 + sz * run / 2 + oz;
+        const ry = sx ? (sx > 0 ? Math.PI / 2 : -Math.PI / 2) : (sz > 0 ? 0 : Math.PI);
+        B.add(G.box, 0xc9a24a, PAT.METAL, [cx, y0 + h / 2 + 0.95, cz], [-ang, ry, 0], [0.07, 0.06, len]);
+        for (let k = 0; k <= 4; k++) { const t = k / 4; box(x0 + sx * run * t + ox, y0 + h * t + 0.48, z0 + sz * run * t + oz, 0.05, 0.95, 0.05, 0x9aa0a8, PAT.METAL); }
+        railGlass.push([cx, y0 + h / 2 + 0.5, cz, ry, len, -ang]);
       }
     }
   };
@@ -408,6 +450,30 @@ export function makeKit(root, gltf, opts) {
       spot(x, y + 2.5, (z + zb) / 2, 0.9);
     }
   };
+  // ventana de vidrio con marco (axis 'x' = en una pared a lo largo de x)
+  const windowPane = (x, y, z, w, h, axis, frame = 0x3a2f2a, sill = true) => {
+    if (axis === 'x') { GB.add(G.box, 0x9fb4c4, 0, [x, y, z], [0, 0, 0], [w, h, 0.04]); box(x, y + h / 2, z, w + 0.12, 0.08, 0.16, frame, PAT.METAL); box(x, y - h / 2, z, w + 0.12, 0.08, 0.16, frame, PAT.METAL); box(x - w / 2, y, z, 0.08, h, 0.16, frame, PAT.METAL); box(x + w / 2, y, z, 0.08, h, 0.16, frame, PAT.METAL); box(x, y, z, 0.05, h, 0.12, frame, PAT.METAL); if (sill) box(x, y - h / 2 - 0.06, z, w + 0.3, 0.06, 0.34, 0xe8e0d2, PAT.PLASTER); }
+    else { GB.add(G.box, 0x9fb4c4, 0, [x, y, z], [0, 0, 0], [0.04, h, w]); box(x, y + h / 2, z, 0.16, 0.08, w + 0.12, frame, PAT.METAL); box(x, y - h / 2, z, 0.16, 0.08, w + 0.12, frame, PAT.METAL); box(x, y, z - w / 2, 0.16, h, 0.08, frame, PAT.METAL); box(x, y, z + w / 2, 0.16, h, 0.08, frame, PAT.METAL); box(x, y, z, 0.12, h, 0.05, frame, PAT.METAL); if (sill) box(x, y - h / 2 - 0.06, z, 0.34, 0.06, w + 0.3, 0xe8e0d2, PAT.PLASTER); }
+  };
+  // árbol con copa en racimos (colores variados)
+  const tree2 = (x, z, y = 0, s = 1, kind = 0) => {
+    const trunk = 0x6b4a32;
+    B.add(G.cyl, trunk, PAT.WOOD, [x, y + 1.3 * s, z], [0, 0, 0.03], [0.17 * s, 2.6 * s, 0.17 * s]);
+    for (let i = 0; i < 3; i++) { const a = rng() * Math.PI * 2; B.add(G.cyl, trunk, PAT.WOOD, [x + Math.cos(a) * 0.35 * s, y + (2.3 + i * 0.3) * s, z + Math.sin(a) * 0.35 * s], [Math.sin(a) * 0.7, 0, -Math.cos(a) * 0.7], [0.07 * s, 1.1 * s, 0.07 * s]); }
+    const greens = kind === 1 ? [0xd9a33a, 0xc98a2a, 0xe8b84a, 0xb97a28] : [0x4f8a3a, 0x5f9e45, 0x3f7a34, 0x6aa84f];
+    const n = 9;
+    for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2 + rng(); const r = (0.5 + rng() * 0.9) * s; const hh = (3.0 + rng() * 1.5) * s; const k = (0.75 + rng() * 0.55) * s; B.add(G.ico, greens[i % greens.length], PAT.FABRIC, [x + Math.cos(a) * r, y + hh, z + Math.sin(a) * r], [rng(), rng(), rng()], [k, k * 0.85, k]); }
+    B.add(G.ico, greens[0], PAT.FABRIC, [x, y + 4.4 * s, z], [0, 0, 0], [1.0 * s, 0.9 * s, 1.0 * s]);
+    P.add(x - 0.2 * s, x + 0.2 * s, y, y + 2.6 * s, z - 0.2 * s, z + 0.2 * s, { cam: false, floor: false });
+  };
+  // reja de barrotes
+  const fence = (x0, z0, x1, z1, h = 2.4, color = 0x2f3a3a) => {
+    const len = Math.hypot(x1 - x0, z1 - z0); const n = Math.round(len / 0.18); const ry = Math.atan2(x1 - x0, z1 - z0);
+    for (let i = 0; i <= n; i++) { const t = i / n; B.add(G.box, color, PAT.METAL, [x0 + (x1 - x0) * t, h / 2, z0 + (z1 - z0) * t], [0, ry, 0], [0.04, h, 0.04]); }
+    for (const yy of [0.15, h - 0.1]) B.add(G.box, color, PAT.METAL, [(x0 + x1) / 2, yy, (z0 + z1) / 2], [0, ry, 0], [0.07, 0.07, len]);
+    for (let i = 0; i <= Math.round(len / 3); i++) { const t = i / Math.max(1, Math.round(len / 3)); B.add(G.box, color, PAT.METAL, [x0 + (x1 - x0) * t, h / 2, z0 + (z1 - z0) * t], [0, ry, 0], [0.12, h + 0.1, 0.12]); }
+    P.add(Math.min(x0, x1) - 0.08, Math.max(x0, x1) + 0.08, 0, h, Math.min(z0, z1) - 0.08, Math.max(z0, z1) + 0.08, { cam: false });
+  };
   const mannequin = (x, z, y, ry) => { W.mannequinSpots.push({ x, z, y, ry }); P.add(x - 0.3, x + 0.3, y, y + 1.75, z - 0.3, z + 0.3, { cam: false, floor: false }); B.add(G.cyl, 0x2b2b33, PAT.METAL, [x, y + 0.03, z], [0, 0, 0], [0.32, 0.06, 0.32]); };
   const poi = (x, z, y, face, kind = 'look') => W.pois.push({ x, z, y, face, kind });
   const rug = (x, z, y, w, d, color, pat = PAT.CARPET) => box(x, y + 0.012, z, w, 0.02, d, color, pat);
@@ -417,13 +483,14 @@ export function makeKit(root, gltf, opts) {
     const mat = worldMaterial(opts.levels || levels);
     for (const m of B.build(mat, true)) root.add(m);
     for (const m of NB.build(mat, false)) root.add(m);
+    if (GB.parts.length) { const gm = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.06, metalness: 0.65, envMapIntensity: 1.3 }); for (const m of GB.build(gm, false)) root.add(m); }
     for (const { mat: pm, geos } of texBatches.values()) {
       const merged = mergeGeometries(geos, false); const mm = pm.clone(); mm.roughness = 0.7; mm.metalness = 0;
       const mesh = new THREE.Mesh(merged, mm); mesh.castShadow = true; mesh.receiveShadow = true; root.add(mesh); geos.forEach((g) => g.dispose());
     }
     if (railGlass.length) {
       const gm = new THREE.MeshStandardMaterial({ color: 0xcfe8ff, transparent: true, opacity: 0.22, roughness: 0.05, metalness: 0.2, depthWrite: false });
-      const geos = railGlass.map(([x, y, z, ry, len]) => { const g = new THREE.BoxGeometry(0.02, 0.9, len); g.applyMatrix4(new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, 0)), new THREE.Vector3(1, 1, 1))); return g; });
+      const geos = railGlass.map(([x, y, z, ry, len, tilt = 0]) => { const g = new THREE.BoxGeometry(0.02, 0.9, len); g.applyMatrix4(new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(tilt, ry, 0, 'YXZ')), new THREE.Vector3(1, 1, 1))); return g; });
       root.add(new THREE.Mesh(mergeGeometries(geos, false), gm));
     }
     if (bulbs.length) {
@@ -444,5 +511,5 @@ export function makeKit(root, gltf, opts) {
     return W;
   };
 
-  return { W, P, B, NB, G, rng, PAT, solid, box, add, wallX, wallZ, doorFrame, placeProp, bigSign, poster, rack, roundRack, table, shelf, counter, plant, palm, bench, sofa, column, lightPanel, spot, stairs, railing, crate, cardbox, booths, mannequin, poi, rug, clothColor, finish };
+  return { W, P, B, NB, GB, G, rng, PAT, windowPane, tree2, fence, solid, box, add, wallX, wallZ, doorFrame, placeProp, bigSign, poster, rack, roundRack, table, shelf, counter, plant, palm, bench, sofa, column, lightPanel, spot, stairs, railing, crate, cardbox, booths, mannequin, poi, rug, clothColor, finish };
 }

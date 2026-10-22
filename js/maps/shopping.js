@@ -10,15 +10,15 @@ const BOUNDS = { x0: -26, x1: 26, z0: -20, z1: 20 };
 export function buildShopping(root, gltf) {
   const K = makeKit(root, gltf, { bounds: BOUNDS, levels: [0, L1, 99], seed: 4242 });
   const { W, P, solid, box, add, wallX, wallZ, bigSign, rack, roundRack, table, shelf, counter, plant, palm, bench, sofa, column, lightPanel, spot, stairs, railing, crate, cardbox, booths, mannequin, poi, rug, placeProp, poster, rng } = K;
-  W.id = 'shopping';
+  W.id = 'shopping'; W.hdr = 'quarry_01_1k.hdr';
   const glass = []; // [x0,x1,y0,y1,z0,z1]
   const addGlass = (x0, x1, y0, y1, z0, z1) => { glass.push([x0, x1, y0, y1, z0, z1]); P.add(x0, x1, y0, y1, z0, z1, { floor: false }); };
 
   // ---------- luz ----------
   const sky = skyMesh([-0.35, 0.78, 0.3]); root.add(sky); W.sky = sky;
   W.fog = { color: 0xf3e7d8, near: 45, far: 140 };
-  const hemi = new THREE.HemisphereLight(0xfff2e2, 0xd9c6ae, 0.95); root.add(hemi);
-  const sun = new THREE.DirectionalLight(0xffe6c4, 2.5);
+  const hemi = new THREE.HemisphereLight(0xf4ecff, 0xc9b49a, 0.62); root.add(hemi);
+  const sun = new THREE.DirectionalLight(0xffe2bc, 2.2);
   sun.position.set(-18, 42, 22); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
   const sc = sun.shadow.camera; sc.left = -34; sc.right = 34; sc.top = 30; sc.bottom = -30; sc.near = 1; sc.far = 110;
   sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.04;

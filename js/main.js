@@ -5,7 +5,9 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { MAPS, MAP_IDS, DEFAULT_MAP } from './maps/index.js';
 import { Character, charMaterial } from './character.js';
 import { Crowd } from './npc.js';
@@ -43,17 +45,23 @@ setVolumes(settings.music, settings.sfx);
 // ---------- render ----------
 const canvas = $('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: settings.quality !== 'baja', powerPreference: 'high-performance', preserveDrawingBuffer: !!Q.get('test') });
-renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.95;
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
 // reflejos suaves en todos los materiales (entorno de estudio)
-let envTex = null;
-{ const pm = new THREE.PMREMGenerator(renderer); envTex = pm.fromScene(new RoomEnvironment(), 0.04).texture; scene.environment = envTex; pm.dispose(); }
+let envTex = null, roomEnv = null; const pmrem = new THREE.PMREMGenerator(renderer);
+roomEnv = pmrem.fromScene(new RoomEnvironment(), 0.04).texture; envTex = roomEnv; scene.environment = envTex;
+// cielos HDR (fotos 360° reales) para luz y reflejos más naturales
+const hdrCache = {};
+function loadHdr(name) {
+  if (!hdrCache[name]) hdrCache[name] = new RGBELoader().loadAsync(BASE + 'assets/hdr/' + name).then((t) => { t.mapping = THREE.EquirectangularReflectionMapping; return { bg: t, env: pmrem.fromEquirectangular(t).texture }; });
+  return hdrCache[name];
+}
 const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 450);
 let composer = null;
 let dynRes = 1; // resolución dinámica: baja sola si el celu va lento
 function resize() {
-  const pr = dynRes * (settings.quality === 'alta' ? Math.min(devicePixelRatio, 2) : settings.quality === 'media' ? Math.min(devicePixelRatio, 1.5) : Math.min(devicePixelRatio, 1));
+  const pr = dynRes * (settings.quality === 'alta' ? Math.min(devicePixelRatio, 2) : settings.quality === 'media' ? Math.min(devicePixelRatio, 1.25) : Math.min(devicePixelRatio, 1));
   renderer.setPixelRatio(pr); renderer.setSize(innerWidth, innerHeight, false);
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
   if (composer) { composer.setPixelRatio(pr); composer.setSize(innerWidth, innerHeight); }
@@ -63,6 +71,8 @@ function setupComposer() {
   if (composer) return;
   composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
+  // sombras suaves en rincones (solo en calidad alta)
+  try { const ao = new GTAOPass(scene, camera, innerWidth, innerHeight, undefined, { radius: 0.45, distanceExponent: 1.3, thickness: 1.2, scale: 1.0, samples: 12 }); ao.blendIntensity = 0.85; composer.addPass(ao); } catch (e) { console.warn('ao', e); }
   composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.22, 0.45, 0.96));
   composer.addPass(new OutputPass());
   resize();
@@ -94,8 +104,8 @@ const app = {
     const d = app.dark;
     W.sun.intensity = baseLight.sun * (1 - 0.92 * d);
     if (hemi) hemi.intensity = baseLight.hemi * (1 - 0.86 * d);
-    renderer.toneMappingExposure = 1.05 * (1 - 0.55 * d);
-    scene.environment = d > 0.25 ? null : envTex;
+    renderer.toneMappingExposure = 0.95 * (1 - 0.55 * d);
+    scene.environment = d > 0.25 ? null : envTex; if (scene.background) scene.backgroundIntensity = 1 - 0.85 * d;
     if (scene.fog) { scene.fog.color.copy(baseLight.fog).lerp(new THREE.Color(0x0b0612), d); scene.fog.far = 200 - 150 * d; }
   },
   input: null,
@@ -140,6 +150,8 @@ function loadMap(id) {
   hemi = null; root.traverse((o) => { if (o.isHemisphereLight && !hemi) hemi = o; });
   baseLight = { sun: W.sun.intensity, hemi: hemi ? hemi.intensity : 1, fog: scene.fog ? scene.fog.color.clone() : new THREE.Color() };
   menuCrowd = new Crowd(W, scene, 1234, id === 'feria' ? 26 : 16, { shadow: settings.quality === 'alta' });
+  envTex = roomEnv; scene.environment = envTex; scene.background = null;
+  if (W.hdr) loadHdr(W.hdr).then((h) => { if (!W || W.id !== id) return; envTex = h.env; scene.environment = h.env; if (W.hdrBg) { scene.background = h.bg; scene.backgroundIntensity = 1; } }).catch((e) => console.warn('hdr', e));
   const m = W.menu; if (preview) { preview.root.position.set(m.px, m.py, m.pz); preview.root.rotation.y = m.ry; }
   store.set('lastMap', id);
   applyQuality(); renderer.shadowMap.needsUpdate = true;
@@ -1001,7 +1013,7 @@ function loop() {
   requestAnimationFrame(loop);
   const dt = Math.min(0.05, clock.getDelta());
   perfT += dt;
-  if (W) { W.sky.material.uniforms.time.value = perfT; W.anim.forEach((f) => f(perfT)); }
+  if (W) { if (W.sky) W.sky.material.uniforms.time.value = perfT; W.anim.forEach((f) => f(perfT)); }
   if (app.net) {
     const now = performance.now();
     const G = hostG();

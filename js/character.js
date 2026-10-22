@@ -76,12 +76,12 @@ class PartBuilder {
 
 // geometrías base compartidas
 const G = {};
-function lathe(profile, seg = 18) { return new THREE.LatheGeometry(profile.map(([r, y]) => new THREE.Vector2(r, y)), seg); }
+function lathe(profile, seg = 26) { return new THREE.LatheGeometry(profile.map(([r, y]) => new THREE.Vector2(r, y)), seg); }
 function geos() {
   if (G.ready) return G;
-  G.sphere = new THREE.SphereGeometry(1, 16, 12);
+  G.sphere = new THREE.SphereGeometry(1, 22, 16);
   G.sphereLo = new THREE.SphereGeometry(1, 8, 6);
-  G.cap = (r, l) => new THREE.CapsuleGeometry(r, l, 3, 10);
+  G.cap = (r, l) => new THREE.CapsuleGeometry(r, l, 4, 16);
   G.cyl = new THREE.CylinderGeometry(1, 1, 1, 14);
   G.cone = (r0, r1) => new THREE.CylinderGeometry(r1, r0, 1, 14, 1, true);
   G.box = new THREE.BoxGeometry(1, 1, 1);
