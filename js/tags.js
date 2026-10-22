@@ -8,6 +8,7 @@ export const TAG_STYLES = {
   tag_corazon: { n: 'Corazones', bg: '#ff7fb6', fg: '#ffffff', bd: '#c0264f', hearts: 1 },
   tag_oro: { n: 'Dorado', bg: 'gold', fg: '#3a2500', bd: '#8a6400' },
   tag_holo: { n: 'Holográfico', bg: 'holo', fg: '#1a0d22', bd: '#ffffff' },
+  tag_t1: { n: 'Temporada 1', bg: 'season', fg: '#ffffff', bd: '#ffc93c' },
 };
 const TEAM = { r: '#e8384f', b: '#2f6fe0' };
 const cache = new Map();
@@ -20,6 +21,7 @@ function draw(num, style, team, mode) {
   if (st.bg === 'wood') { g.fillStyle = '#a86e3c'; g.fillRect(0, 0, 256, 128); g.strokeStyle = 'rgba(60,30,10,.35)'; for (let i = 0; i < 9; i++) { g.beginPath(); g.moveTo(0, 8 + i * 14); g.bezierCurveTo(80, 2 + i * 14, 170, 18 + i * 14, 256, 8 + i * 14); g.stroke(); } }
   else if (st.bg === 'gold') { const gr = g.createLinearGradient(0, 0, 256, 128); gr.addColorStop(0, '#fff1a8'); gr.addColorStop(0.5, '#e2b23a'); gr.addColorStop(1, '#fff0a0'); g.fillStyle = gr; g.fillRect(0, 0, 256, 128); }
   else if (st.bg === 'holo') { const gr = g.createLinearGradient(0, 0, 256, 128); ['#9ef0ff', '#c9a6ff', '#ffb3e6', '#fff3a8', '#a8ffcf'].forEach((col, i) => gr.addColorStop(i / 4, col)); g.fillStyle = gr; g.fillRect(0, 0, 256, 128); }
+  else if (st.bg === 'season') { const gr = g.createLinearGradient(0, 0, 256, 128); gr.addColorStop(0, '#8a4fc7'); gr.addColorStop(1, '#ff4f8b'); g.fillStyle = gr; g.fillRect(0, 0, 256, 128); const cc = ['#ffc93c', '#7ee8ff', '#ffffff', '#3fd18a']; for (let i = 0; i < 26; i++) { g.fillStyle = cc[i % 4]; g.fillRect((i * 97) % 246 + 4, (i * 53) % 118 + 4, 6, 3); } }
   else { g.fillStyle = st.bg; g.fillRect(0, 0, 256, 128); }
   if (st.hearts) { g.fillStyle = 'rgba(255,255,255,.35)'; g.font = '26px sans-serif'; for (let i = 0; i < 10; i++) g.fillText('♥', (i * 53) % 250, 20 + ((i * 37) % 110)); }
   // borde (en equipos, color del equipo)

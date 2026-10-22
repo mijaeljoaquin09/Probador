@@ -11,7 +11,7 @@ import { Character, charMaterial } from './character.js';
 import { Crowd } from './npc.js';
 import { FX } from './fx.js';
 import { GameClient } from './game.js';
-import { HostRules, ITEMS, ITEM_KEYS, lookStr, parseLook } from './rules.js';
+import { HostRules, ITEMS, ITEM_KEYS, COMBOS, lookStr, parseLook } from './rules.js';
 import { LocalNet, OnlineNet, PEER_PREFIX } from './net.js';
 import { makeBackend, niceError } from './backend.js';
 import { tagMaterial, tagPreviewURL, TAG_STYLES } from './tags.js';
@@ -27,8 +27,11 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const hex = (n) => '#' + (n.hex ?? n).toString(16).padStart(6, '0');
 const levelOf = (xp) => Math.floor(Math.sqrt((xp || 0) / 60)) + 1;
 const ADMIN_LABELS = { players: 'Jugadores', today: 'Activos hoy', online: 'Conectados ahora', games: 'Partidas jugadas', gems: 'Gemas en juego', rooms: 'Salas abiertas', banned: 'Bloqueados' };
-const EMOTES = { emo_saludo: { n: 'Saludo', e: '👋' }, emo_baile: { n: 'Baile', e: '🕺' }, emo_festejo: { n: 'Festejo', e: '🙌' }, emo_pose: { n: 'Pose de pasarela', e: '💃' } };
-const NAMECOLORS = { nc_blanco: 'Blanco', nc_rosa: 'Rosa', nc_turquesa: 'Turquesa', nc_oro: 'Dorado', nc_arcoiris: 'Arcoíris' };
+const EMOTES = { emo_saludo: { n: 'Saludo', e: '👋' }, emo_baile: { n: 'Baile', e: '🕺' }, emo_festejo: { n: 'Festejo', e: '🙌' }, emo_pose: { n: 'Pose de pasarela', e: '💃' }, emo_giro: { n: 'Giro', e: '🌀' } };
+const NAMECOLORS = { nc_blanco: 'Blanco', nc_rosa: 'Rosa', nc_turquesa: 'Turquesa', nc_oro: 'Dorado', nc_arcoiris: 'Arcoíris', nc_t1: 'Temporada' };
+// artículos que solo se consiguen en el pase de batalla
+const EXCL = { col_t1: 'Color lila', nc_t1: 'Nombre de temporada', tag_t1: 'Cartel de temporada', emo_giro: 'Gesto: giro' };
+const SEASON = { n: 'Temporada 1 · Gran Liquidación', end: '31/12', xp: 250, max: 30, price: 600 };
 const KIND_ICON = { hat: { hat_corona: '👑', hat_gato: '🐱', hat_vincha: '🎀', hat_auris: '🎧' }, acc: { acc_collar: '📿', acc_alas: '🪽', acc_rinonera: '👝' } };
 
 // ---------- ajustes ----------
@@ -44,7 +47,8 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
 // reflejos suaves en todos los materiales (entorno de estudio)
-{ const pm = new THREE.PMREMGenerator(renderer); scene.environment = pm.fromScene(new RoomEnvironment(), 0.04).texture; pm.dispose(); }
+let envTex = null;
+{ const pm = new THREE.PMREMGenerator(renderer); envTex = pm.fromScene(new RoomEnvironment(), 0.04).texture; scene.environment = envTex; pm.dispose(); }
 const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 450);
 let composer = null;
 let dynRes = 1; // resolución dinámica: baja sola si el celu va lento
@@ -90,7 +94,8 @@ const app = {
     const d = app.dark;
     W.sun.intensity = baseLight.sun * (1 - 0.92 * d);
     if (hemi) hemi.intensity = baseLight.hemi * (1 - 0.86 * d);
-    renderer.toneMappingExposure = 1.05 * (1 - 0.35 * d);
+    renderer.toneMappingExposure = 1.05 * (1 - 0.55 * d);
+    scene.environment = d > 0.25 ? null : envTex;
     if (scene.fog) { scene.fog.color.copy(baseLight.fog).lerp(new THREE.Color(0x0b0612), d); scene.fog.far = 200 - 150 * d; }
   },
   input: null,
@@ -275,6 +280,7 @@ async function enterWithAccount(isNew) {
   if (isNew) notify(`¡Bienvenida, ${prof.username}! Tenés ${prof.gems} 💎 de regalo.`);
   if (recovering) { recovering = false; openProfile(); $('pfMsg').className = 'msgline ok'; $('pfMsg').textContent = 'Escribí tu contraseña nueva y tocá "Cambiar".'; $('pfPass').focus(); }
   be.shop().then((s) => { shopCat = s || []; renderCloset(); }).catch(() => { });
+  be.passRewards().then((r) => { passCat = r; renderHome(); }).catch(() => { });
 }
 setInterval(() => { if (prof) be.touch(); }, 60000);
 
@@ -300,6 +306,7 @@ function renderHome() {
   }
   $('bAdmin').classList.toggle('hidden', !(prof && prof.is_admin));
   $('shGems').textContent = prof ? prof.gems : 0;
+  $('passDot').classList.toggle('hidden', !(prof && passCat && passClaimables().length));
 }
 $('bProfile').onclick = () => { sfx.click(); prof ? openProfile() : showAuth(); if (!prof) setAuthMode('up'); };
 $('bDaily').onclick = async () => {
@@ -313,7 +320,8 @@ for (const [id, d] of [['tL', -1], ['tR', 1]]) {
 }
 $('bPlay').onclick = () => { sfx.click(); openPlay(prof ? 'rooms' : 'practice'); };
 $('bCloset').onclick = () => { sfx.click(); clTab = 'top'; renderCloset(); openSheet('sCloset'); };
-$('bShop').onclick = () => { sfx.click(); openShop('color'); };
+$('bShop').onclick = () => { sfx.click(); openShop('cons'); };
+$('bPass').onclick = () => { sfx.click(); openPass(); };
 $('bRank').onclick = () => { sfx.click(); openRank('wins'); };
 $('bHow').onclick = () => { sfx.click(); openSheet('sHow'); };
 $('bAdmin').onclick = () => { sfx.click(); openAdmin(); };
@@ -386,11 +394,12 @@ const CL_TABS = [
 let clTab = 'top';
 const priceOf = (id) => { const it = shopCat.find((s) => s.id === id); return it ? it.price : ''; };
 const has = (id) => !id || owned().includes(id);
+const lockTxt = (id) => (EXCL[id] ? '🎟️ Pase' : '💎' + priceOf(id));
 function swatches(idx, list, label, shopable = true) {
   return `<div class="sec"><h4>${label}</h4><div class="sw">${list.map((c, i) => { const lock = shopable && c.shop && !has(c.shop); return `<button data-i="${idx}" data-v="${i}" ${lock ? `data-lock="color"` : ''} class="${myLook[idx] === i ? 'on' : ''} ${lock ? 'lock' : ''}" style="background:${hex(c)}" aria-label="${esc(c.m || 'color')}"></button>`; }).join('')}</div></div>`;
 }
 function optsRow(idx, list, label, kind) {
-  return `<div class="sec"><h4>${label}</h4><div class="opts">${list.map((o, i) => { const n = o.n ?? o; const lock = o.shop && !has(o.shop); return `<button data-i="${idx}" data-v="${i}" ${lock ? `data-lock="${kind}"` : ''} class="opt ${myLook[idx] === i ? 'on' : ''} ${lock ? 'lock' : ''}">${lock ? '🔒 ' : ''}${esc(n)}${lock ? `<span class="pr">💎${priceOf(o.shop)}</span>` : ''}</button>`; }).join('')}</div></div>`;
+  return `<div class="sec"><h4>${label}</h4><div class="opts">${list.map((o, i) => { const n = o.n ?? o; const lock = o.shop && !has(o.shop); return `<button data-i="${idx}" data-v="${i}" ${lock ? `data-lock="${kind}"` : ''} class="opt ${myLook[idx] === i ? 'on' : ''} ${lock ? 'lock' : ''}">${lock ? '🔒 ' : ''}${esc(n)}${lock ? `<span class="pr">${lockTxt(o.shop)}</span>` : ''}</button>`; }).join('')}</div></div>`;
 }
 function renderCloset() {
   if (!$('clTabs')) return;
@@ -402,9 +411,9 @@ function renderCloset() {
   if (clTab === 'hat') h = optsRow(L.HAT, HATS, 'Qué llevás', 'hat') + (HATS[myLook[L.HAT]].nocolor || myLook[L.HAT] === 0 ? '' : swatches(L.HATC, COLORS, 'Color'));
   if (clTab === 'acc') h = optsRow(L.ACC, ACCS, 'Accesorio', 'acc') + (ACCS[myLook[L.ACC]].nocolor || myLook[L.ACC] === 0 ? '' : swatches(L.ACCC, COLORS, 'Color'));
   if (clTab === 'body') h = optsRow(L.HAIR, HAIRS, 'Peinado') + swatches(L.HAIRC, HAIR_COLORS, 'Color de pelo', false) + swatches(L.SKIN, SKINS, 'Piel', false);
-  if (clTab === 'tag') h = `<div class="sec"><h4>Estilo del cartel de tu frente</h4><div class="tagGrid">${Object.entries(TAG_STYLES).map(([id, s]) => { const lock = id !== 'tag_clasico' && !has(id); return `<button class="tagCard ${c.ts === id ? 'on' : ''} ${lock ? 'lock' : ''}" data-cos="tag_style" data-id="${id}" ${lock ? 'data-lock="tag"' : ''}><img src="${tagPreviewURL(id, 777)}" alt="">${lock ? '🔒 ' : ''}${s.n}${lock ? ` <span class="gem">💎${priceOf(id)}</span>` : ''}</button>`; }).join('')}</div></div>`;
-  if (clTab === 'name') h = `<div class="sec"><h4>Color de tu nombre</h4><div class="list">${Object.entries(NAMECOLORS).map(([id, n]) => { const lock = id !== 'nc_blanco' && !has(id); return `<button class="item" style="text-align:left" data-cos="name_color" data-id="${id}" ${lock ? 'data-lock="namecolor"' : ''}><div class="t"><b class="${id}" style="font-size:18px">${esc(myName())}</b><small>${n}</small></div>${c.nc === id ? '✅' : lock ? `🔒 <span class="gem">💎${priceOf(id)}</span>` : ''}</button>`; }).join('')}</div></div>`;
-  if (clTab === 'emote') h = `<div class="sec"><h4>Tu gesto (botón 😄 en la partida)</h4><div class="list">${Object.entries(EMOTES).map(([id, e]) => { const lock = id !== 'emo_saludo' && !has(id); return `<button class="item" style="text-align:left" data-cos="emote" data-id="${id}" ${lock ? 'data-lock="emote"' : ''}><span style="font-size:28px">${e.e}</span><div class="t"><b>${e.n}</b><small>${lock ? 'En la tienda' : 'Tocá para probarlo'}</small></div>${c.em === id ? '✅' : lock ? `🔒 <span class="gem">💎${priceOf(id)}</span>` : ''}</button>`; }).join('')}</div></div>`;
+  if (clTab === 'tag') h = `<div class="sec"><h4>Estilo del cartel de tu frente</h4><div class="tagGrid">${Object.entries(TAG_STYLES).map(([id, s]) => { const lock = id !== 'tag_clasico' && !has(id); if (lock && EXCL[id] && !prof) return ''; return `<button class="tagCard ${c.ts === id ? 'on' : ''} ${lock ? 'lock' : ''}" data-cos="tag_style" data-id="${id}" ${lock ? 'data-lock="tag"' : ''}><img src="${tagPreviewURL(id, 777)}" alt="">${lock ? '🔒 ' : ''}${s.n}${lock ? ` <span class="gem">${lockTxt(id)}</span>` : ''}</button>`; }).join('')}</div></div>`;
+  if (clTab === 'name') h = `<div class="sec"><h4>Color de tu nombre</h4><div class="list">${Object.entries(NAMECOLORS).map(([id, n]) => { const lock = id !== 'nc_blanco' && !has(id); return `<button class="item" style="text-align:left" data-cos="name_color" data-id="${id}" ${lock ? 'data-lock="namecolor"' : ''}><div class="t"><b class="${id}" style="font-size:18px">${esc(myName())}</b><small>${n}</small></div>${c.nc === id ? '✅' : lock ? `🔒 <span class="gem">${lockTxt(id)}</span>` : ''}</button>`; }).join('')}</div></div>`;
+  if (clTab === 'emote') h = `<div class="sec"><h4>Tu gesto (botón 😄 en la partida)</h4><div class="list">${Object.entries(EMOTES).map(([id, e]) => { const lock = id !== 'emo_saludo' && !has(id); return `<button class="item" style="text-align:left" data-cos="emote" data-id="${id}" ${lock ? 'data-lock="emote"' : ''}><span style="font-size:28px">${e.e}</span><div class="t"><b>${e.n}</b><small>${lock ? 'En la tienda' : 'Tocá para probarlo'}</small></div>${c.em === id ? '✅' : lock ? `🔒 <span class="gem">${lockTxt(id)}</span>` : ''}</button>`; }).join('')}</div></div>`;
   if (['top', 'bot', 'shoe', 'hat', 'acc'].includes(clTab)) h += `<div class="sec"><button class="btn block" id="bRandom">🎲 Combinación al azar</button></div>`;
   if (!prof) h += `<p style="color:var(--muted);font-size:12.5px;margin-top:14px">Con una cuenta tu ropa queda guardada y podés comprar cosas en la tienda.</p>`;
   $('clBody').innerHTML = h;
@@ -414,7 +423,14 @@ const ANIM_OF_EMOTE = { emo_saludo: 'wave', emo_baile: 'dance', emo_festejo: 'ch
 $('clTabs').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; clTab = b.dataset.t; sfx.click(); renderCloset(); });
 $('clBody').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b || b.id === 'bRandom') return;
-  if (b.dataset.lock) { sfx.click(); if (!prof) { notify('Creá una cuenta para conseguir cosas de la tienda.'); return; } closeSheet('sCloset'); openShop(b.dataset.lock); return; }
+  if (b.dataset.lock) {
+    sfx.click(); if (!prof) { notify('Creá una cuenta para conseguir cosas de la tienda.'); return; }
+    const v = +b.dataset.v; const i = +b.dataset.i;
+    const id = b.dataset.id || (i === L.HAT ? HATS[v].shop : i === L.ACC ? ACCS[v].shop : (COLORS[v] || {}).shop);
+    closeSheet('sCloset');
+    if (id && EXCL[id]) { notify('Se consigue en el Pase de batalla 🎟️'); openPass(); } else openShop(b.dataset.lock);
+    return;
+  }
   if (b.dataset.cos) {
     sfx.click(); const id = b.dataset.id;
     if (!prof) { notify('Creá una cuenta para personalizar esto.'); return; }
@@ -427,10 +443,12 @@ $('clBody').addEventListener('click', (e) => {
 });
 
 // ================= TIENDA =================
-const SHOP_TABS = [{ k: 'color', n: '🎨 Colores' }, { k: 'hat', n: '👑 Cabeza' }, { k: 'acc', n: '🪽 Accesorios' }, { k: 'tag', n: '🏷️ Carteles' }, { k: 'namecolor', n: '✨ Nombres' }, { k: 'emote', n: '💃 Gestos' }];
+const SHOP_TABS = [{ k: 'cons', n: '🎒 Objetos' }, { k: 'color', n: '🎨 Colores' }, { k: 'hat', n: '👑 Cabeza' }, { k: 'acc', n: '🪽 Accesorios' }, { k: 'tag', n: '🏷️ Carteles' }, { k: 'namecolor', n: '✨ Nombres' }, { k: 'emote', n: '💃 Gestos' }];
 let shopTab = 'color';
+let consCat = [];
 async function openShop(tab) {
-  shopTab = tab || 'color'; openSheet('sShop'); $('shopMsg').textContent = '';
+  shopTab = tab || 'cons'; openSheet('sShop'); $('shopMsg').textContent = '';
+  if (!consCat.length) { try { consCat = await be.consumables(); } catch (e) { } }
   if (!shopCat.length) { $('shopGrid').innerHTML = '<div class="empty">Cargando…</div>'; try { shopCat = await be.shop(); } catch (e) { $('shopGrid').innerHTML = `<div class="empty">${esc(niceError(e))}</div>`; return; } }
   renderShop();
 }
@@ -444,6 +462,11 @@ function shopPreview(it) {
 function renderShop() {
   $('shTabs').innerHTML = SHOP_TABS.map((t) => `<button class="chip ${t.k === shopTab ? 'on' : ''}" data-t="${t.k}">${t.n}</button>`).join('');
   $('shGems').textContent = prof ? prof.gems : 0;
+  if (shopTab === 'cons') {
+    const its = prof ? prof.items || {} : {};
+    $('shopGrid').innerHTML = consCat.map((c) => { const it = ITEMS[c.id]; if (!it) return ''; const p5 = Math.floor(c.price * 5 * 0.8); return `<div class="sCard"><div class="pv">${it.e}</div><b>${it.n}</b><div class="desc">${esc(it.d)}</div><div class="have">Tenés: ${its[c.id] || 0}</div><div class="two"><button class="btn primary" data-cbuy="${c.id}" data-q="1" data-p="${c.price}">💎 ${c.price}</button><button class="btn yellow" data-cbuy="${c.id}" data-q="5" data-p="${p5}">x5 · ${p5}</button></div></div>`; }).join('') || '<div class="empty">Cargando…</div>';
+    return;
+  }
   const items = shopCat.filter((s) => s.kind === shopTab);
   $('shopGrid').innerHTML = items.map((it) => {
     const mine = has(it.id) && prof; const cant = prof && prof.gems < it.price;
@@ -452,6 +475,17 @@ function renderShop() {
 }
 $('shTabs').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { shopTab = b.dataset.t; sfx.click(); renderShop(); } });
 $('shopGrid').addEventListener('click', async (e) => {
+  const cb = e.target.closest('[data-cbuy]');
+  if (cb) {
+    const m = $('shopMsg'); m.className = 'msgline';
+    if (!prof) { m.textContent = 'Necesitás una cuenta para comprar.'; return; }
+    if (prof.gems < +cb.dataset.p) { m.textContent = 'Te faltan gemas. Jugá partidas online, abrí el regalo diario o subí el pase.'; sfx.wrong(); return; }
+    if (cb.dataset.confirm !== '1') { cb.dataset.confirm = '1'; const old = cb.textContent; cb.textContent = '¿Seguro? Tocá de nuevo'; setTimeout(() => { if (cb.isConnected) { cb.dataset.confirm = ''; cb.textContent = old; } }, 2500); return; }
+    setBusy(cb, true, '…');
+    try { await be.buyConsumable(cb.dataset.cbuy, +cb.dataset.q); prof = be.profile; sfx.pick(); m.className = 'msgline ok'; m.textContent = `¡Listo! ${ITEMS[cb.dataset.cbuy].e} ${ITEMS[cb.dataset.cbuy].n} x${cb.dataset.q} a tu mochila.`; renderShop(); renderHome(); renderBag(); }
+    catch (err) { m.textContent = niceError(err); renderShop(); }
+    return;
+  }
   const b = e.target.closest('[data-buy]'); if (!b) return;
   const m = $('shopMsg'); m.className = 'msgline';
   if (!prof) { m.textContent = 'Necesitás una cuenta para comprar.'; return; }
@@ -462,6 +496,100 @@ $('shopGrid').addEventListener('click', async (e) => {
   try { await be.buy(it.id); prof = be.profile; sfx.fanfare(); m.className = 'msgline ok'; m.textContent = `¡${it.name} es tuyo! Ya lo podés usar en el Vestidor.`; renderShop(); renderHome(); renderCloset(); }
   catch (err) { m.textContent = niceError(err); setBusy(b, false, '💎 ' + it.price); }
 });
+
+// ================= PASE DE BATALLA =================
+let passCat = null;
+const passLevel = () => Math.min(SEASON.max, 1 + Math.floor(((prof && prof.pass_xp) || 0) / SEASON.xp));
+function passClaimables() {
+  if (!prof || !passCat) return [];
+  const lv = passLevel(); const out = [];
+  for (const r of passCat) { if (r.level > lv) continue; if (r.premium && !prof.pass_premium) continue; const done = (r.premium ? prof.pass_prem : prof.pass_free) || []; if (!done.includes(r.level)) out.push(r); }
+  return out;
+}
+function itemName(id) { const s = shopCat.find((x) => x.id === id); return EXCL[id] || (s ? s.name : id); }
+function rewardView(r) {
+  if (r.kind === 'gems') return { ic: '💎', t: `${r.amount} gemas` };
+  if (r.kind === 'cons') { const it = ITEMS[r.ref] || {}; return { ic: it.e || '🎁', t: `${it.n || r.ref} x${r.amount}` }; }
+  const id = r.ref;
+  if (id.startsWith('col_')) { const c = COLORS.find((x) => x.shop === id); return { ic: `<div class="sw1" style="background:${c ? hex(c) : '#888'}"></div>`, t: itemName(id) }; }
+  if (id.startsWith('tag_')) return { ic: `<img src="${tagPreviewURL(id, 777)}" alt="">`, t: itemName(id) };
+  if (id.startsWith('nc_')) return { ic: `<span class="${id}" style="font-family:var(--display);font-size:18px">Aa</span>`, t: itemName(id) };
+  if (id.startsWith('emo_')) return { ic: (EMOTES[id] || {}).e || '✨', t: itemName(id) };
+  return { ic: (KIND_ICON[id.split('_')[0]] || {})[id] || '🎁', t: itemName(id) };
+}
+async function openPass() {
+  openSheet('sPass'); const body = $('passBody');
+  if (!prof) { body.innerHTML = `<div class="empty">El pase de batalla es para jugadoras con cuenta.<br><button class="btn primary" id="goSignup2" style="margin-top:12px">Crear cuenta</button></div>`; $('goSignup2').onclick = () => { closeSheet('sPass'); showAuth(); setAuthMode('up'); }; return; }
+  if (!passCat) { body.innerHTML = '<div class="empty">Cargando…</div>'; try { passCat = await be.passRewards(); if (!shopCat.length) shopCat = await be.shop(); } catch (e) { body.innerHTML = `<div class="empty">${esc(niceError(e))}</div>`; return; } }
+  renderPass(true);
+}
+function renderPass(scroll) {
+  const body = $('passBody'); const lv = passLevel(); const xp = prof.pass_xp || 0;
+  const inLv = lv >= SEASON.max ? SEASON.xp : xp % SEASON.xp; const n = passClaimables().length;
+  $('paGems').textContent = prof.gems;
+  let h = `<div class="passHead"><div class="lvlBig"><small>NIVEL</small>${lv}</div><div class="mid"><b>${SEASON.n}</b><div class="bar2"><i style="width:${Math.round(inLv / SEASON.xp * 100)}%"></i></div><small style="color:var(--muted);font-weight:700">${lv >= SEASON.max ? '¡Pase completo!' : `${inLv} / ${SEASON.xp} XP para el nivel ${lv + 1}`} · termina el ${SEASON.end} · jugá online para sumar XP</small></div>`;
+  h += `<div style="display:flex;flex-direction:column;gap:8px">${prof.pass_premium ? '<span class="chip on">⭐ Premium activo</span>' : `<button class="btn yellow" id="bBuyPass">⭐ Premium · 💎 ${SEASON.price}</button>`}${n ? `<button class="btn primary" id="bClaimAll">Reclamar ${n} ${n === 1 ? 'premio' : 'premios'}</button>` : ''}</div></div>`;
+  h += `<div class="legend"><span>Arriba: gratis</span><span style="color:var(--mustard)">Abajo: ⭐ premium (cosas exclusivas)</span></div><div class="track" id="track">`;
+  for (let L2 = 1; L2 <= SEASON.max; L2++) {
+    h += `<div class="lv ${L2 <= lv ? 'reached' : ''}"><div class="n">${L2}</div>`;
+    for (const prem of [false, true]) {
+      const r = passCat.find((x) => x.level === L2 && x.premium === prem); if (!r) { h += '<div class="rw lock"></div>'; continue; }
+      const done = ((prem ? prof.pass_prem : prof.pass_free) || []).includes(L2);
+      const ok = !done && L2 <= lv && (!prem || prof.pass_premium);
+      const v = rewardView(r);
+      h += `<button class="rw ${prem ? 'prem' : ''} ${done ? 'done' : ok ? 'ok' : 'lock'}" data-l="${L2}" data-p="${prem ? 1 : 0}"><div class="ic">${v.ic}</div>${esc(v.t)}</button>`;
+    }
+    h += '</div>';
+  }
+  body.innerHTML = h + '</div><div class="msgline" id="passMsg"></div>';
+  if (scroll) { const tr = $('track'); const col = tr.children[Math.max(0, lv - 2)]; if (col) tr.scrollLeft = col.offsetLeft - tr.offsetLeft; }
+  const bb = $('bBuyPass'); if (bb) bb.onclick = async () => {
+    if (prof.gems < SEASON.price) { $('passMsg').textContent = `Necesitás ${SEASON.price} gemas.`; sfx.wrong(); return; }
+    if (bb.dataset.c !== '1') { bb.dataset.c = '1'; bb.textContent = '¿Seguro? Tocá de nuevo'; return; }
+    try { await be.buyPass(); prof = be.profile; sfx.fanfare(); notify('⭐ ¡Pase premium activado!'); renderPass(); renderHome(); } catch (e) { $('passMsg').textContent = niceError(e); }
+  };
+  const ca = $('bClaimAll'); if (ca) ca.onclick = async () => { setBusy(ca, true, 'Reclamando…'); for (const r of passClaimables()) { try { await be.claimPass(r.level, r.premium); } catch (e) { } } prof = be.profile; sfx.fanfare(); notify('🎁 ¡Premios reclamados!'); renderPass(); renderHome(); renderCloset(); };
+}
+$('passBody').addEventListener('click', async (e) => {
+  const b = e.target.closest('.rw.ok'); if (!b) return;
+  b.classList.remove('ok');
+  try { await be.claimPass(+b.dataset.l, b.dataset.p === '1'); prof = be.profile; sfx.pick(); const r = passCat.find((x) => x.level === +b.dataset.l && x.premium === (b.dataset.p === '1')); notify('🎁 ' + rewardView(r).t); renderPass(); renderHome(); renderCloset(); }
+  catch (err) { $('passMsg').textContent = niceError(err); renderPass(); }
+});
+
+// ================= MOCHILA =================
+let bag = (store.get('bag', null) || ['bin', 'box']).filter((k) => ITEMS[k]).slice(0, 2);
+while (bag.length < 2) bag.push(bag[0] === 'box' ? 'bin' : 'box');
+let bagSel = -1;
+const freeItems = () => !session || session.kind === 'practice';
+const stockOf = (k) => (freeItems() ? Infinity : ((prof && prof.items && prof.items[k]) || 0));
+const validBag = () => bag.filter((k) => ITEMS[k] && stockOf(k) > 0);
+function pushBag() { if (app.net) app.net.setPresence({ lo: validBag() }); }
+function renderBag() {
+  if (!$('bag')) return;
+  $$('#bag .bagSlot').forEach((el, i) => {
+    const k = bag[i]; const it = ITEMS[k]; const st = stockOf(k);
+    el.className = 'bagSlot' + (bagSel === i ? ' sel' : '') + (st > 0 ? '' : ' empty');
+    el.innerHTML = it ? `<span>${it.e}</span><div style="text-align:left">${it.n}<small>${freeItems() ? 'gratis en práctica' : st > 0 ? `te quedan ${st}` : 'sin stock · comprá en la tienda'}</small></div>` : '<span>＋</span>';
+  });
+  const pk = $('bagPick'); pk.classList.toggle('hidden', bagSel < 0);
+  if (bagSel >= 0) pk.innerHTML = ITEM_KEYS.map((k) => { const st = stockOf(k); return `<button data-k="${k}" class="${st > 0 ? '' : 'no'} ${bag[bagSel] === k ? 'on' : ''}"><span>${ITEMS[k].e}</span>${ITEMS[k].n.replace('¡', '').replace('!', '')}<b>${freeItems() ? '∞' : st}</b></button>`; }).join('') + (freeItems() ? '' : '<button data-shop="1"><span>🛍️</span>Comprar<b>más</b></button>');
+  const combo = COMBOS.find((c) => (bag.includes(c.a) && bag.includes(c.b)));
+  $('bagMsg').innerHTML = combo ? `✨ Combo posible: <b>${combo.n}</b>` : bagSel >= 0 ? 'Elegí un objeto para ese lugar.' : 'Tocá un lugar para cambiar el objeto.';
+}
+$('bag').addEventListener('click', (e) => { const b = e.target.closest('.bagSlot'); if (!b) return; sfx.click(); bagSel = bagSel === +b.dataset.s ? -1 : +b.dataset.s; renderBag(); });
+$('bagPick').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.shop) { openShop('cons'); return; }
+  const k = b.dataset.k; if (stockOf(k) <= 0) { notify('No te quedan. Comprá en la tienda 🛍️'); return; }
+  const other = 1 - bagSel; if (bag[other] === k) bag[other] = bag[bagSel];
+  bag[bagSel] = k; bagSel = -1; store.set('bag', bag); sfx.pick(); renderBag(); pushBag();
+});
+// al usar un objeto online se descuenta del stock
+app.onItemUsed = (k) => {
+  if (freeItems() || !prof) return;
+  be.useConsumable(k).then(() => { prof = be.profile; pushBag(); }).catch(() => { });
+};
 
 // ================= RANKING =================
 async function openRank(by) {
@@ -542,6 +670,7 @@ async function renderAdUser(note = '') {
       <div style="display:flex;gap:8px;margin-top:8px"><input class="search" id="adAmt" type="number" inputmode="numeric" placeholder="Otra cantidad (ej: 250 o -50)" style="flex:1"><button class="btn primary" id="adAmtGo">Dar</button></div>
       <input class="search" id="adReason" placeholder="Motivo (opcional, lo ve en su historial)" style="margin-top:8px"></div>
     <div class="sec"><h4>Regalar o quitar artículos</h4><div class="opts">${items.map((it) => { const o = (u.owned || []).includes(it.id); return `<button class="opt ${o ? 'on' : ''}" data-it="${it.id}" data-has="${o ? 1 : 0}">${o ? '✅ ' : '＋ '}${esc(it.name)}</button>`; }).join('')}</div></div>
+    <div class="sec"><h4>Dar objetos (+5 cada toque)</h4><div class="opts">${ITEM_KEYS.map((k) => `<button class="opt" data-cons="${k}">${ITEMS[k].e} ${(u.items || {})[k] || 0}</button>`).join('')}</div></div>
     <div class="sec"><h4>Cambiar nombre</h4><div style="display:flex;gap:8px"><input class="search" id="adName" value="${esc(u.username)}" maxlength="14"><button class="btn" id="adNameGo">Guardar</button></div></div>
     <div class="sec" style="display:flex;gap:8px;flex-wrap:wrap">
       ${isMe ? '' : `<button class="btn ${u.banned ? 'teal' : 'danger'}" id="adBan">${u.banned ? 'Desbloquear' : '🚫 Bloquear cuenta'}</button>`}
@@ -554,6 +683,7 @@ async function renderAdUser(note = '') {
   $$('#adUser [data-g]').forEach((b) => { b.onclick = () => give(+b.dataset.g); });
   $('adAmtGo').onclick = () => give(Math.trunc(+$('adAmt').value));
   $$('#adUser [data-it]').forEach((b) => { b.onclick = () => { const g = b.dataset.has !== '1'; act(() => be.adminItem(u.id, b.dataset.it, g), g ? 'Artículo regalado.' : 'Artículo quitado.'); }; });
+  $$('#adUser [data-cons]').forEach((b) => { b.onclick = () => act(() => be.adminGiveCons(u.id, b.dataset.cons, 5), `+5 ${ITEMS[b.dataset.cons].n}.`); });
   $('adNameGo').onclick = () => act(() => be.adminRename(u.id, $('adName').value.trim()), 'Nombre cambiado.');
   if ($('adBan')) $('adBan').onclick = () => act(() => be.adminBan(u.id, !u.banned), u.banned ? 'Cuenta desbloqueada.' : 'Cuenta bloqueada.');
   if ($('adAdm')) $('adAdm').onclick = () => act(() => be.adminAdmin(u.id, !u.is_admin), u.is_admin ? 'Ya no es admin.' : 'Ahora es admin.');
@@ -585,6 +715,7 @@ function goFull() {
 }
 const CAT = { leer: ['#1fb5a8', 'Para leer números'], proteger: ['#b98af0', 'Para protegerte'], caos: ['#ff4f8b', 'Caos para todos'] };
 $('itemList').innerHTML = Object.keys(CAT).map((c) => `<div class="catlbl" style="color:${CAT[c][0]}">${CAT[c][1]}</div>` + ITEM_KEYS.filter((k) => ITEMS[k].c === c).map((k) => `<div><span>${ITEMS[k].e}</span><span><b>${ITEMS[k].n}</b>${ITEMS[k].d}</span></div>`).join('')).join('');
+$('comboList').innerHTML = '<div class="catlbl" style="color:#ffc93c">Combinaciones</div>' + COMBOS.map((c) => `<div><span>${ITEMS[c.a].e}${ITEMS[c.b].e}</span><span><b>${c.n}</b>${c.d}</span></div>`).join('');
 $('bPauseHow').onclick = () => openSheet('sHow');
 $('bPauseSet').onclick = () => { renderSettings(); $('setQuit').classList.remove('hidden'); openSheet('sSettings'); };
 
@@ -702,9 +833,10 @@ async function startSession(kind, opts = {}) {
       if (!found) { net.leave(); throw new Error('nohost'); }
     }
     app.net = net;
-    session = { kind, code: code || '' };
     const c = cosm();
-    net.setPresence({ n: myName(), lk0: lookStr(myLook), ts: c.ts, nc: c.nc, em: c.em, uid: prof ? prof.id : '', v: 2 });
+    session = { kind, code: code || '' };
+    net.setPresence({ n: myName(), lk0: lookStr(myLook), ts: c.ts, nc: c.nc, em: c.em, uid: prof ? prof.id : '', v: 2, lo: validBag() });
+    bagSel = -1; renderBag();
     if (app.isHost) {
       app.rules = new HostRules({ get W() { return W; }, now: () => Date.now() });
       if (kind === 'host') { app.rules.setCfg({ max: cfgDraft.max, dur: cfgDraft.dur, lives: cfgDraft.lives, mode: cfgDraft.mode, map: cfgDraft.map }); app.rules.G.name = cfgDraft.name || 'La sala de ' + prof.username; }
@@ -957,5 +1089,5 @@ function onPhase(G, prev) {
   }
 }
 
-window.__probador = { app, settings, be, get prof() { return prof; }, get game() { return game; }, get W() { return W; }, startSession };
+window.__probador = { app, settings, be, get prof() { return prof; }, async reload() { prof = await be.loadProfile(); renderHome(); }, get game() { return game; }, get W() { return W; }, startSession };
 boot().catch((e) => { console.error(e); $('loadMsg').textContent = 'No se pudo cargar: ' + e.message; });

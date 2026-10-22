@@ -91,6 +91,14 @@ class SupaBackend {
   async adminAdmin(id, v) { return this.rpc('admin_set_admin', { p_user: id, p_admin: v }); }
   async adminRename(id, name) { return this.rpc('admin_rename', { p_user: id, p_name: name }); }
   async adminStats() { return this.rpc('admin_stats', {}); }
+  // objetos y pase de batalla
+  async consumables() { const { data, error } = await this.sb.from('consumables').select('*').eq('active', true).order('sort'); if (error) throw error; return data; }
+  async buyConsumable(id, qty) { const r = await this.rpc('buy_consumable', { p_item: id, p_qty: qty }); this.profile.gems = r.gems; this.profile.items = r.items; return r; }
+  async useConsumable(id) { const r = await this.rpc('use_consumable', { p_item: id }); if (this.profile) this.profile.items = r.items; return r; }
+  async passRewards() { const { data, error } = await this.sb.from('pass_rewards').select('*').order('level'); if (error) throw error; return data; }
+  async buyPass() { const r = await this.rpc('buy_pass', {}); await this.loadProfile(); return r; }
+  async claimPass(level, premium) { const r = await this.rpc('claim_pass', { p_level: level, p_premium: premium }); await this.loadProfile(); return r; }
+  async adminGiveCons(id, item, qty) { return this.rpc('admin_give_consumable', { p_user: id, p_item: item, p_qty: qty }); }
   channel(name) { return this.sb.channel(name, { config: { broadcast: { self: false, ack: false } } }); }
 }
 
@@ -103,6 +111,12 @@ const SHOP_MOCK = [
   ['nc_rosa', 'namecolor', 'Nombre rosa', 100], ['nc_oro', 'namecolor', 'Nombre dorado', 250], ['nc_turquesa', 'namecolor', 'Nombre turquesa', 100], ['nc_arcoiris', 'namecolor', 'Nombre arcoíris', 450],
   ['emo_baile', 'emote', 'Baile', 200], ['emo_festejo', 'emote', 'Festejo', 200], ['emo_pose', 'emote', 'Pose de pasarela', 300],
 ].map(([id, kind, name, price], i) => ({ id, kind, name, price, sort: i }));
+const CONS_MOCK = [['bin', 30], ['cam', 25], ['liq', 40], ['per', 30], ['box', 35], ['esp', 25], ['tur', 30], ['res', 30], ['rem', 45], ['apa', 45], ['hum', 35], ['ban', 20]].map(([id, price], i) => ({ id, price, sort: i + 1, name: id }));
+const PASS_MOCK = (() => {
+  const F = [['gems', null, 50], ['cons', 'box', 2], ['gems', null, 60], ['cons', 'tur', 2], ['gems', null, 80], ['cons', 'cam', 2], ['gems', null, 60], ['cons', 'hum', 2], ['gems', null, 70], ['item', 'tag_madera', 1], ['cons', 'per', 2], ['gems', null, 80], ['cons', 'esp', 2], ['gems', null, 90], ['item', 'col_neon', 1], ['cons', 'ban', 3], ['gems', null, 100], ['cons', 'liq', 2], ['gems', null, 100], ['item', 'emo_festejo', 1], ['cons', 'apa', 2], ['gems', null, 120], ['cons', 'rem', 2], ['gems', null, 120], ['item', 'nc_turquesa', 1], ['cons', 'res', 3], ['gems', null, 150], ['cons', 'bin', 3], ['gems', null, 150], ['gems', null, 200]];
+  const P = [['item', 'col_t1', 1], ['gems', null, 100], ['cons', 'bin', 3], ['cons', 'res', 3], ['item', 'nc_t1', 1], ['gems', null, 120], ['cons', 'apa', 3], ['item', 'hat_gato', 1], ['cons', 'rem', 3], ['item', 'emo_giro', 1], ['gems', null, 150], ['cons', 'liq', 3], ['item', 'acc_rinonera', 1], ['cons', 'box', 4], ['gems', null, 200], ['cons', 'bin', 4], ['item', 'hat_vincha', 1], ['gems', null, 200], ['cons', 'tur', 4], ['item', 'acc_alas', 1], ['gems', null, 220], ['cons', 'hum', 4], ['item', 'hat_corona', 1], ['cons', 'cam', 4], ['gems', null, 250], ['cons', 'per', 4], ['item', 'nc_arcoiris', 1], ['gems', null, 300], ['cons', 'rem', 4], ['item', 'tag_t1', 1]];
+  const out = []; for (let i = 0; i < 30; i++) { out.push({ level: i + 1, premium: false, kind: F[i][0], ref: F[i][1], amount: F[i][2] }); out.push({ level: i + 1, premium: true, kind: P[i][0], ref: P[i][1], amount: P[i][2] }); } return out;
+})();
 class MockBackend {
   constructor() { this.kind = 'mock'; this.listeners = new Set(); this.user = null; this.profile = null; }
   db() { return store.get('mockdb', { users: {}, rooms: {}, log: [] }); }
@@ -114,7 +128,7 @@ class MockBackend {
     const d = this.db(); if (Object.values(d.users).some((u) => u.email === email)) throw new Error('User already registered');
     if (Object.values(d.users).some((u) => u.p.username.toLowerCase() === username.toLowerCase())) throw new Error('Ese nombre ya está en uso. Probá otro.');
     const id = uid() + uid();
-    d.users[id] = { email, pass, p: { id, username, look: look || '', tag_style: 'tag_clasico', name_color: 'nc_blanco', emote: 'emo_saludo', gems: 150, xp: 0, games: 0, wins: 0, finds: 0, owned: [], is_admin: email.toLowerCase() === 'mijaelyjoaquin09@gmail.com' || email.startsWith('admin'), banned: false, last_seen: new Date().toISOString() } };
+    d.users[id] = { email, pass, p: { id, username, look: look || '', tag_style: 'tag_clasico', name_color: 'nc_blanco', emote: 'emo_saludo', gems: 150, xp: 0, games: 0, wins: 0, finds: 0, owned: [], items: { bin: 2, box: 2, tur: 2, cam: 2 }, pass_xp: 0, pass_premium: false, pass_free: [], pass_prem: [], is_admin: email.toLowerCase() === 'mijaelyjoaquin09@gmail.com' || email.startsWith('admin'), banned: false, last_seen: new Date().toISOString() } };
     this.save(d); this.user = { id, email }; store.set('mocksession', id); return { needsConfirm: false };
   }
   async signIn(email, pass) { const d = this.db(); const u = Object.values(d.users).find((x) => x.email === email && x.pass === pass); if (!u) throw new Error('Invalid login credentials'); this.user = { id: u.p.id, email }; store.set('mocksession', u.p.id); return this.user; }
@@ -125,8 +139,16 @@ class MockBackend {
   async loadProfile() { const d = this.db(); this.profile = { ...d.users[this.user.id].p }; return this.profile; }
   async saveProfile(f) { const d = this.db(); const p = d.users[this.user.id].p; for (const k of ['username', 'look', 'tag_style', 'name_color', 'emote']) if (f[k] !== undefined) p[k] = f[k]; this.save(d); return this.loadProfile(); }
   async shop() { return SHOP_MOCK; }
+  mp() { const d = this.db(); const p = d.users[this.user.id].p; p.items = p.items || {}; p.pass_free = p.pass_free || []; p.pass_prem = p.pass_prem || []; p.pass_xp = p.pass_xp || 0; return [d, p]; }
+  async consumables() { return CONS_MOCK; }
+  async buyConsumable(id, qty) { const [d, p] = this.mp(); const c = CONS_MOCK.find((x) => x.id === id); const total = qty === 5 ? Math.floor(c.price * 5 * 0.8) : c.price; if (p.gems < total) throw new Error('No te alcanzan las gemas'); p.gems -= total; p.items[id] = (p.items[id] || 0) + qty; this.save(d); this.profile = { ...p }; return { gems: p.gems, items: p.items }; }
+  async useConsumable(id) { const [d, p] = this.mp(); if (!(p.items[id] > 0)) throw new Error('No te quedan'); p.items[id]--; this.save(d); this.profile = { ...p }; return { items: p.items }; }
+  async passRewards() { return PASS_MOCK; }
+  async buyPass() { const [d, p] = this.mp(); if (p.pass_premium) throw new Error('Ya tenés el pase premium'); if (p.gems < 600) throw new Error('No te alcanzan las gemas'); p.gems -= 600; p.pass_premium = true; this.save(d); this.profile = { ...p }; return {}; }
+  async claimPass(level, prem) { const [d, p] = this.mp(); const lvl = Math.min(30, 1 + Math.floor(p.pass_xp / 250)); if (level > lvl) throw new Error('Todavía no llegaste a ese nivel'); if (prem && !p.pass_premium) throw new Error('Necesitás el pase premium'); const list = prem ? p.pass_prem : p.pass_free; if (list.includes(level)) throw new Error('Ya lo reclamaste'); const rw = PASS_MOCK.find((r) => r.level === level && r.premium === !!prem); if (rw.kind === 'gems') p.gems += rw.amount; else if (rw.kind === 'cons') p.items[rw.ref] = (p.items[rw.ref] || 0) + rw.amount; else if (p.owned.includes(rw.ref)) p.gems += 100; else p.owned.push(rw.ref); list.push(level); this.save(d); this.profile = { ...p }; return { got: rw.ref, kind: rw.kind }; }
+  async adminGiveCons(id, item, qty) { const d = this.db(); const p = d.users[id].p; p.items = p.items || {}; p.items[item] = Math.max(0, (p.items[item] || 0) + qty); this.save(d); return p.items; }
   async buy(id) { const d = this.db(); const p = d.users[this.user.id].p; const it = SHOP_MOCK.find((x) => x.id === id); if (p.owned.includes(id)) throw new Error('Ya lo tenés'); if (p.gems < it.price) throw new Error('No te alcanzan las gemas'); p.gems -= it.price; p.owned.push(id); d.log.unshift({ user_id: p.id, delta: -it.price, reason: 'Compra: ' + it.name, created_at: new Date().toISOString() }); this.save(d); this.profile = { ...p }; return { gems: p.gems, owned: p.owned }; }
-  async reportMatch(f, won) { const d = this.db(); const p = d.users[this.user.id].p; const g = Math.min(200, 20 + f * 15 + (won ? 60 : 0)); p.gems += g; p.xp += 40 + f * 20 + (won ? 80 : 0); p.games++; p.finds += f; if (won) p.wins++; this.save(d); this.profile = { ...p }; return { gained: g }; }
+  async reportMatch(f, won) { const d = this.db(); const p = d.users[this.user.id].p; const g = Math.min(200, 20 + f * 15 + (won ? 60 : 0)); p.gems += g; const xg = 40 + f * 20 + (won ? 80 : 0); p.xp += xg; p.pass_xp = (p.pass_xp || 0) + xg; p.games++; p.finds += f; if (won) p.wins++; this.save(d); this.profile = { ...p }; return { gained: g }; }
   async claimDaily() { const d = this.db(); const p = d.users[this.user.id].p; if (p.last_daily && Date.now() - p.last_daily < 20 * 3600e3) return { gained: 0, next: new Date(p.last_daily + 20 * 3600e3).toISOString() }; p.last_daily = Date.now(); p.gems += 60; this.save(d); this.profile = { ...p }; return { gained: 60 }; }
   async touch() { }
   async leaderboard(by = 'wins') { return Object.values(this.db().users).map((u) => u.p).sort((a, b) => b[by] - a[by]).slice(0, 30); }

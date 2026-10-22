@@ -21,6 +21,8 @@ export const COLORS = [
   { hex: 0x9be22d, m: 'verde lima', f: 'verde lima', mp: 'verde lima', fp: 'verde lima', shop: 'col_lima' },
   { hex: 0x1b2a6b, m: 'azul noche', f: 'azul noche', mp: 'azul noche', fp: 'azul noche', shop: 'col_noche' },
   { hex: 0xff7a66, m: 'coral', f: 'coral', mp: 'coral', fp: 'coral', shop: 'col_coral' },
+  // exclusivos del pase de batalla
+  { hex: 0xb48cff, m: 'lila', f: 'lila', mp: 'lila', fp: 'lila', shop: 'col_t1' },
 ];
 export const BASE = { COLORS: 12, HATS: 5, ACCS: 5 };
 export const TOPS = [

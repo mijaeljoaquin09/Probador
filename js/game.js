@@ -2,13 +2,13 @@
 import * as THREE from 'three';
 import { Character, makeDog } from './character.js';
 import { navPath, nearestNode } from './phys.js';
-import { ITEMS, parseLook } from './rules.js';
+import { ITEMS, COMBOS, parseLook } from './rules.js';
 import { tagMaterial, TAG_STYLES } from './tags.js';
 import { clamp, lerpAng, angDiff, fmtTime, store } from './util.js';
 import { sfx, playMusic } from './audio.js';
 
-const ANIMS = ['idle', 'walk', 'run', 'tag', 'dance', 'mannequin', 'browse', 'stumble', 'wave', 'jump', 'cheer', 'pose'];
-const EMO_ANIM = { emo_saludo: 'wave', emo_baile: 'dance', emo_festejo: 'cheer', emo_pose: 'pose' };
+const ANIMS = ['idle', 'walk', 'run', 'tag', 'dance', 'mannequin', 'browse', 'stumble', 'wave', 'jump', 'cheer', 'pose', 'spin'];
+const EMO_ANIM = { emo_saludo: 'wave', emo_baile: 'dance', emo_festejo: 'cheer', emo_pose: 'pose', emo_giro: 'spin' };
 const AI = Object.fromEntries(ANIMS.map((a, i) => [a, i]));
 const $ = (id) => document.getElementById(id);
 const HEART = '<svg viewBox="0 0 120 70" fill="none" stroke="#ffc93c" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"><path d="M60 22c0-8 10-8 10-15S64 0 60 0s-8 3-8 7"/><path d="M60 22 8 56c-6 4-3 10 4 10h96c7 0 10-6 4-10L60 22Z"/></svg>';
@@ -21,8 +21,7 @@ const TUT = [
   { txt: '🏷️ Todos tienen un <b>número en la frente</b>. El tuyo está arriba a la derecha: ¡que no te lo lean!', hl: 'myTag', wait: 6 },
   { txt: '🔍 Acercate a un bot y ponete <b>de frente</b>, cerca, hasta poder leer su número.', check: (g) => g.tutData.read > 1 },
   { txt: '🔢 Tocá el botón <b>🔢</b> y marcá ese número en el teclado. Si acertás: <b>+100</b>.', desk: '🔢 Escribí el número con las teclas <b>0-9</b>. Si acertás: <b>+100</b>.', hl: 'bPad', check: (g) => g.tutData.typed },
-  { txt: '🛍️ Las bolsitas de colores son <b>objetos</b>. Caminá hasta una.', check: (g) => g.tutData.picked },
-  { txt: '✨ Tocá el objeto (abajo a la derecha) para <b>usarlo</b>.', hl: 'slot0', check: (g) => g.tutData.used },
+  { txt: '🎒 Abajo a la derecha están los <b>2 objetos de tu mochila</b>. Tocá uno para usarlo. Volvés a tenerlos cada vez que reaparecés.', desk: '🎒 Tus <b>2 objetos de la mochila</b> se usan con <b>Z</b> y <b>X</b>. Volvés a tenerlos cada vez que reaparecés.', hl: 'slot0', check: (g) => g.tutData.used },
   { txt: '🪜 Hay escaleras, terraza, escenario y cajones para trepar. Para cuidarte: no le muestres la cara a nadie y usá los probadores para cambiar tu número.', wait: 8 },
 ];
 
@@ -35,7 +34,7 @@ export class GameClient {
     this.spectIdx = 0; this.lastHud = 0; this.matchT0 = 0; this.started = false;
     this.banner = { until: 0 }; this.camPos = new THREE.Vector3(); this.camLook = new THREE.Vector3();
     this.lastLookT = 0; this.tut = null; this.tutData = {};
-    this.typed = ''; this.padOpen = false; this.zoom = false; this.photos = []; this.photoIdx = 0;
+    this.combo = {}; this.typed = ''; this.padOpen = false; this.zoom = false; this.photos = []; this.photoIdx = 0;
     this.readT = 0; this.readCache = new Map(); this.boxes = new Map(); this.smokes = new Map(); this.bananas = new Map();
     this.mirrorCam = new THREE.PerspectiveCamera(60, 2, 0.1, 200);
     this.bindHud();
@@ -154,6 +153,7 @@ export class GameClient {
     else if (k === 'ban') args = [me.x - fx * 0.6, me.z - fz * 0.6, me.y];
     else if (k === 'cam') { this.photoReq = true; }
     this.act('us', i, ...args);
+    if (this.app.onItemUsed) this.app.onItemUsed(k);
     sfx.use(); this.app.input.vibrate(20); this.tutData.used = true;
     const msg = {
       bin: '🔭 <b>Binoculares listos.</b> Tocá 🔍 para hacer zoom y leer de lejos (20 s).',
@@ -242,7 +242,8 @@ export class GameClient {
     const slip = q.st.sl > t;
     const facing = slip ? 1 : (dx * Math.sin(c.ry) + dz * Math.cos(c.ry)) / (Math.hypot(dx, dz) || 1);
     const liq = G.fx.liq && t < G.fx.liq[1]; const apa = G.fx.apa && t < G.fx.apa[1];
-    const range = (liq || this.photoMode) ? READ_FAR : this.zoomOn(t) ? READ_ZOOM : apa ? READ_DARK : READ;
+    const myst = (this.myP() || {}).st || {}; const noct = apa && myst.bi > t;
+    const range = this.photoMode ? (liq ? 70 : READ_FAR) : liq ? READ_FAR : this.zoomOn(t) ? READ_ZOOM : noct ? 20 : apa ? READ_DARK : READ;
     if (d > range || facing < 0.3) return 'blur';
     return liq || apa ? 'glow' : 'ok';
   }
@@ -274,7 +275,7 @@ export class GameClient {
       }
       if (q.p.lk !== c.key) { c.key = q.p.lk; c.ch.setLook(look, false); }
       const inBox = q.st.bx > t && !q.hidden;
-      c.ch.root.visible = !q.hidden && !inBox;
+      c.ch.root.visible = !q.hidden && !inBox && !(isMe && this.selfHidden);
       c.ch.root.position.set(c.x, c.y, c.z); c.ch.root.rotation.set(q.st.sl > t ? -1.35 : 0, c.ry, 0);
       if (q.st.sl > t) c.ch.root.position.y = c.y + 0.25;
       let anim = ANIMS[q.a] || 'idle';
@@ -334,7 +335,7 @@ export class GameClient {
         const fx = Math.sin(me.cy), fz = Math.cos(me.cy), rx = -Math.cos(me.cy), rz = Math.sin(me.cy);
         dx = fx * mv.y + rx * mv.x; dz = fz * mv.y + rz * mv.x; const dl = Math.hypot(dx, dz) || 1; dx /= dl; dz /= dl;
         const run = mv.run || mag > 0.93;
-        want = inBox ? 1.3 : (run ? (turbo ? 8 : 4.8) : 2.4 * Math.max(0.45, mag) * (turbo ? 1.6 : 1));
+        want = (inBox && !turbo) ? 1.3 : (run ? (turbo && !inBox ? 8 : 4.8) : 2.4 * Math.max(0.45, mag) * (turbo && !inBox ? 1.6 : 1));
       }
     }
     const acc = me.grounded ? 16 : 5; const k = 1 - Math.exp(-acc * dt);
@@ -348,7 +349,7 @@ export class GameClient {
       if (want > 0) me.ry = lerpAng(me.ry, Math.atan2(dx, dz), 1 - Math.exp(-dt * 14));
     }
     const g = P.groundAt(me.x, me.z, me.y);
-    if (jump && me.grounded && !locked && !slip && !inBox) { me.vy = st.rs > t ? SUPER_V : JUMP_V; me.grounded = false; sfx.pop(); }
+    if (jump && me.grounded && !locked && !slip && !inBox) { me.vy = st.rs > t ? SUPER_V : JUMP_V; me.grounded = false; sfx.pop(); if (st.rs > t && turbo) { me.vx += Math.sin(me.ry) * 8; me.vz += Math.cos(me.ry) * 8; } }
     if (!me.grounded || me.y > g + 0.02) {
       me.vy -= GRAV * dt; me.y += me.vy * dt;
       const g2 = P.groundAt(me.x, me.z, me.y);
@@ -398,6 +399,9 @@ export class GameClient {
     this.updateTut(dt);
     // flash recibido
     $('flashW').classList.toggle('on', st.fl > t);
+    // combinaciones activas
+    const act = { apa: G.fx.apa && t < G.fx.apa[1], liq: G.fx.liq && t < G.fx.liq[1], bin: st.bi > t, tur: st.tu > t, res: st.rs > t, box: st.bx > t, cam: this.photoMode };
+    for (const c of COMBOS) { const on = !!(act[c.a] && act[c.b]); if (on && !this.combo[c.id]) { this.showBanner(`✨ <b>¡Combo! ${c.n}</b><br>${c.d}`, 'mustard', 4.5); sfx.fanfare(); } this.combo[c.id] = on; }
     if (performance.now() - this.lastHud > 100) { this.lastHud = performance.now(); this.updateHud(t, p, st, list, G); }
   }
 
@@ -455,6 +459,8 @@ export class GameClient {
       const k = 1 - Math.exp(-dt * 14);
       this.camPos.x += (px - this.camPos.x) * k; this.camPos.z += (pz - this.camPos.z) * k; this.camPos.y += (py - this.camPos.y) * (1 - Math.exp(-dt * 9));
       if (free < 0.99) this.camPos.set(px, py, pz);
+      // si la cámara quedó pegada a la espalda, ocultamos tu personaje para que no tape la vista
+      this.selfHidden = Math.hypot(px - tx, pz - tz) < 1.05;
       cam.position.copy(this.camPos);
       this.camLook.set(tx + cfx * 2 + rx * sh, ty + 0.1 - Math.sin(pitch) * 1.2, tz + cfz * 2 + rz * sh);
       cam.lookAt(this.camLook);

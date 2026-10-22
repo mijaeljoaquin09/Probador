@@ -451,6 +451,9 @@ export class Character {
       T.shL[2] = 2.7 + Math.sin(p) * 0.2; T.shR[2] = -2.7 - Math.sin(p) * 0.2; T.elL[0] = -0.3; T.elR[0] = -0.3;
       T.knL[0] = T.knR[0] = Math.max(0, Math.sin(p)) * 0.5; T.hipL[0] = T.hipR[0] = -Math.max(0, Math.sin(p)) * 0.25;
       T.head[0] = -0.2; bob = Math.max(0, Math.sin(p)) * 0.16;
+    } else if (anim === 'spin') {
+      const p = time * 9;
+      T.hips[1] = Math.sin(p * 0.45) * Math.PI; T.shL[2] = 1.4; T.shR[2] = -1.4; T.head[0] = -0.15; bob = Math.abs(Math.sin(p)) * 0.05;
     } else if (anim === 'pose') {
       T.shL[2] = 0.9; T.elL[0] = -1.6; T.elL[1] = 0.6; T.shR[0] = -0.2; T.shR[2] = -0.6; T.elR[0] = -1.9;
       T.hips[1] = 0.35; T.torso[1] = -0.25; T.head[1] = -0.45; T.head[2] = 0.15; T.hipL[0] = -0.15; T.knL[0] = 0.35; T.hipR[2] = -0.08;

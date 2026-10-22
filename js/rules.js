@@ -18,8 +18,16 @@ export const ITEMS = {
   ban: { n: 'Cáscara de banana', e: '🍌', c: 'caos', d: 'La dejás en el piso: quien la pise se resbala y queda boca arriba.' },
 };
 export const ITEM_POOL = Object.keys(ITEMS);
+// combinaciones: si tenés los dos efectos activos a la vez, pasa algo extra
+export const COMBOS = [
+  { id: 'noct', a: 'apa', b: 'bin', n: 'Visión nocturna', d: 'Con los binoculares activos durante un apagón, leés a 20 m sin hacer zoom y los carteles brillan.' },
+  { id: 'cang', a: 'tur', b: 'res', n: 'Salto canguro', d: 'Turbo + resorte: cada salto te lanza lejos hacia adelante.' },
+  { id: 'flash', a: 'liq', b: 'cam', n: 'Foto de liquidación', d: 'Una foto durante la liquidación lee carteles hasta 70 m.' },
+  { id: 'cajav', a: 'box', b: 'tur', n: 'Caja veloz', d: 'Con turbo, dentro de la caja te movés a velocidad normal.' },
+];
+const pickLo = (lo) => (Array.isArray(lo) ? lo.filter((k) => ITEMS[k]).slice(0, 2) : []);
 export const ITEM_KEYS = ITEM_POOL;
-export const CFG = { RESPAWN: 3, HIT: 100, WRONG: 25, BONUS: 0, RANGE: 16, RANGE_BIN: 45, BOOTH_T: 3, ITEMS_ON_GROUND: 10 };
+export const CFG = { RESPAWN: 3, HIT: 100, WRONG: 25, BONUS: 0, RANGE: 16, RANGE_BIN: 45, BOOTH_T: 3, ITEMS_ON_GROUND: 0 };
 
 export const lookStr = (l) => l.map((v) => v.toString(36)).join('');
 export const parseLook = (s) => (s ? [...s].map((c) => parseInt(c, 36)) : null);
@@ -47,7 +55,7 @@ export class HostRules {
     const full = [];
     for (const id of ids) {
       const pr = peers.get(id);
-      const info = { n: String(pr.n).slice(0, 14), lk: pr.lk0 || lookStr(randomLook()), ts: pr.ts || 'tag_clasico', nc: pr.nc || 'nc_blanco', em: pr.em || 'emo_saludo', uid: pr.uid || '' };
+      const info = { n: String(pr.n).slice(0, 14), lk: pr.lk0 || lookStr(randomLook()), ts: pr.ts || 'tag_clasico', nc: pr.nc || 'nc_blanco', em: pr.em || 'emo_saludo', uid: pr.uid || '', lo: pickLo(pr.lo) };
       if (!G.pl[id]) {
         if (Object.keys(G.pl).length >= G.cfg.max) { full.push(id); continue; }
         G.pl[id] = { ...info, lv: G.cfg.lives, sc: 0, h: id === hostId ? 1 : 0 };
@@ -59,7 +67,8 @@ export class HostRules {
     const G = this.G; if (Object.keys(G.pl).length >= G.cfg.max) return;
     const names = ['Rulo', 'Tita', 'Coco', 'Lola', 'Pipo', 'Mimi', 'Toto', 'Kika', 'Nacho'];
     const id = 'bot' + (++this.botN) + '-' + uid().slice(0, 3);
-    G.pl[id] = { n: names[(this.botN - 1) % names.length] + ' 🤖', lk: lookStr(randomLook()), ts: 'tag_clasico', nc: 'nc_blanco', em: 'emo_saludo', lv: G.cfg.lives, sc: 0, bt: 1 };
+    const lo = shuffle(this.rng, ITEM_POOL.slice()).slice(0, 2);
+    G.pl[id] = { n: names[(this.botN - 1) % names.length] + ' 🤖', lk: lookStr(randomLook()), ts: 'tag_clasico', nc: 'nc_blanco', em: 'emo_saludo', lv: G.cfg.lives, sc: 0, bt: 1, lo };
   }
   removeBot() { const ids = Object.keys(this.G.pl).filter((k) => this.G.pl[k].bt); if (ids.length) delete this.G.pl[ids[ids.length - 1]]; }
   setCfg(cfg) { Object.assign(this.G.cfg, cfg); for (const p of Object.values(this.G.pl)) p.lv = this.G.cfg.lives; }
@@ -77,7 +86,7 @@ export class HostRules {
     const order = shuffle(this.rng, ids.slice());
     order.forEach((pid, k) => {
       const p = G.pl[pid];
-      Object.assign(p, { lv: G.cfg.lives, sc: 0, sp: 0, lost: 0, finds: 0, inv: [], st: {}, si: spawns[k % spawns.length], gone: 0, num: 0, tm: G.cfg.mode === 'teams' ? (k % 2 ? 'b' : 'r') : '' });
+      Object.assign(p, { lv: G.cfg.lives, sc: 0, sp: 0, lost: 0, finds: 0, inv: (p.lo || []).slice(), st: {}, si: spawns[k % spawns.length], gone: 0, num: 0, tm: G.cfg.mode === 'teams' ? (k % 2 ? 'b' : 'r') : '' });
     });
     for (const pid of ids) G.pl[pid].num = this.newNum();
     for (const pid of ids) if (G.pl[pid].bt) this.bots[pid] = this.newBot(pid, this.ctx.W.spawns[G.pl[pid].si]);
@@ -134,7 +143,7 @@ export class HostRules {
       if (G.cfg.mode === 'teams' && v.tm === p.tm) { st.cd = r1(t + 1); this.ev('mt', pid); return; }
       if ((vst.r && vst.r > t) || (vst.h && vst.h > t)) { st.cd = r1(t + 1); this.ev('nv', pid); return; }
       const vp = this.posOf(vid, peers);
-      const range = (st.bi > t || (G.fx.liq && t < G.fx.liq[1])) ? CFG.RANGE_BIN : CFG.RANGE;
+      const range = (G.fx.liq && t < G.fx.liq[1]) ? 75 : st.bi > t ? CFG.RANGE_BIN : CFG.RANGE;
       if (!me || !vp || !this.canSee(me, vp, range)) { st.cd = r1(t + 1); this.ev('nv', pid); return; }
       this.eliminate(pid, vid);
     } else if (type === 'pk') {
@@ -190,6 +199,9 @@ export class HostRules {
       this.pending.push([t + CFG.RESPAWN, () => {
         if (!G.pl[vid]) return;
         G.pl[vid].num = this.newNum(G.pl[vid].num);
+        // vuelve con los objetos de la mochila (si todavía le quedan)
+        const pr = this.lastPeers && this.lastPeers.get(vid); if (pr && pr.lo) G.pl[vid].lo = pickLo(pr.lo);
+        G.pl[vid].inv = (G.pl[vid].lo || []).slice();
         this.ev('rs', vid, si);
         if (this.bots[vid]) { const s = this.ctx.W.spawns[si]; Object.assign(this.bots[vid], { x: s.x, z: s.z, y: s.y || 0, path: [], seen: {} }); }
       }]);
