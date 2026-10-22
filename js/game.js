@@ -13,7 +13,7 @@ const AI = Object.fromEntries(ANIMS.map((a, i) => [a, i]));
 const $ = (id) => document.getElementById(id);
 const HEART = '<svg viewBox="0 0 120 70" fill="none" stroke="#ffc93c" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"><path d="M60 22c0-8 10-8 10-15S64 0 60 0s-8 3-8 7"/><path d="M60 22 8 56c-6 4-3 10 4 10h96c7 0 10-6 4-10L60 22Z"/></svg>';
 const GRAV = 18, JUMP_V = 6.4, SUPER_V = 12.5;
-const READ = 12, READ_ZOOM = 48, READ_FAR = 70;
+const READ = 15, READ_ZOOM = 48, READ_FAR = 70, SHOW_MAX = 40;
 
 const TUT = [
   { txt: '👋 <b>¡Bienvenida!</b> Mové el joystick de la izquierda para caminar.', desk: '👋 <b>¡Bienvenida!</b> Caminá con <b>W A S D</b>.', check: (g) => g.tutData.walked > 4 },
@@ -229,18 +229,21 @@ export class GameClient {
     return out;
   }
   // ¿puedo leer el cartel de c? (de frente, cerca, sin paredes ni humo)
+  // devuelve: 'hide' (no se ve el cartel), 'blur' (se ve pero no se lee), 'ok', 'glow'
   readable(c, q, t, G) {
-    if (q.hidden || q.st.bx > t) return '';
+    if (q.hidden || q.st.bx > t) return 'hide';
     const me = this.me; const P = this.app.W.P;
+    const cam = this.app.camera.position;
+    const dc = Math.hypot(cam.x - c.x, cam.y - c.y - 1.6, cam.z - c.z);
+    if (dc > SHOW_MAX && !this.zoomOn(t) && !this.photoMode) return 'hide';
+    if (P.camRay(cam.x, cam.y, cam.z, c.x, c.y + 1.62, c.z) < 0.95) return 'hide';
+    for (const [, s] of this.smokes) { if (segDist(cam, c.x, c.y + 1.6, c.z, s.position) < s.userData.r) return 'hide'; }
     const dx = me.x - c.x, dz = me.z - c.z; const d = Math.hypot(dx, dz, me.y - c.y);
     const slip = q.st.sl > t;
     const facing = slip ? 1 : (dx * Math.sin(c.ry) + dz * Math.cos(c.ry)) / (Math.hypot(dx, dz) || 1);
     const liq = G.fx.liq && t < G.fx.liq[1]; const apa = G.fx.apa && t < G.fx.apa[1];
     const range = (liq || this.photoMode) ? READ_FAR : this.zoomOn(t) ? READ_ZOOM : apa ? 25 : READ;
-    if (d > range || facing < 0.15) return '';
-    const cam = this.app.camera.position;
-    if (P.camRay(cam.x, cam.y, cam.z, c.x, c.y + 1.62, c.z) < 0.95) return '';
-    for (const [, s] of this.smokes) { if (segDist(cam, c.x, c.y + 1.6, c.z, s.position) < s.userData.r) return ''; }
+    if (d > range || facing < 0.05) return 'blur';
     return liq || apa ? 'glow' : 'ok';
   }
   zoomOn(t) { const p = this.myP(); return this.zoom && p && p.st && p.st.bi > t; }
@@ -273,8 +276,14 @@ export class GameClient {
       if (isMe) c.ch.setTag(tagMaterial(q.p.num || '000', q.p.ts, q.p.tm || ''));
       else {
         if (doRead || c.read === undefined) c.read = this.readable(c, q, t, G);
-        c.ch.setTag(tagMaterial(q.p.num || '000', q.p.ts, q.p.tm || '', c.read === 'ok' ? '' : c.read === 'glow' ? 'glow' : 'blur'));
-        if (c.read) readSomeone = true;
+        if (c.read === 'hide') c.ch.hideTag();
+        else {
+          c.ch.setTag(tagMaterial(q.p.num || '000', q.p.ts, q.p.tm || '', c.read === 'ok' ? '' : c.read));
+          // de lejos el cartel se agranda para que se pueda leer en el celular
+          const cp = this.app.camera.position; const dcam = Math.hypot(cp.x - c.x, cp.y - c.y - 1.6, cp.z - c.z);
+          c.ch.tag.scale.setScalar(this.zoomOn(t) ? 1.3 : clamp(dcam / 4.2, 1, 2.3));
+        }
+        if (c.read === 'ok' || c.read === 'glow') readSomeone = true;
       }
       // caja de cartón
       let bx = this.boxes.get(q.pid);

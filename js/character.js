@@ -288,7 +288,7 @@ function buildParts(look, opts = {}) {
   return out;
 }
 
-const TAG_GEO = new THREE.PlaneGeometry(0.3, 0.15);
+const TAG_GEO = new THREE.PlaneGeometry(0.4, 0.2);
 const TAG_BACK = new THREE.MeshStandardMaterial({ color: 0xe9e2d4, roughness: 0.8 });
 const TAG_BAND = new THREE.TorusGeometry(0.237, 0.008, 4, 28);
 TAG_BAND.rotateX(Math.PI / 2);
@@ -370,10 +370,10 @@ export class Character {
   // cartel con número en la frente (se mueve con la cabeza)
   setTag(material) {
     if (!this.tag) {
-      const g = new THREE.Group(); g.position.set(0, 0.315, 0.205); g.rotation.x = -0.18;
-      const card = new THREE.Mesh(TAG_GEO, material); card.renderOrder = 2; g.add(card);
-      const back = new THREE.Mesh(TAG_GEO, TAG_BACK); back.rotation.y = Math.PI; back.position.z = -0.003; g.add(back);
-      const band = new THREE.Mesh(TAG_BAND, TAG_BACK); band.position.set(0, -0.005, -0.205); band.rotation.x = 0.18; g.add(band);
+      // va un poco por delante de la frente y se dibuja encima del pelo y los gorros (ver tags.js)
+      const g = new THREE.Group(); g.position.set(0, 0.36, 0.27); g.rotation.x = -0.32;
+      const card = new THREE.Mesh(TAG_GEO, material); card.renderOrder = 10; g.add(card);
+      const back = new THREE.Mesh(TAG_GEO, TAG_BACK); back.rotation.y = Math.PI; back.position.z = -0.004; g.add(back);
       this.j.head.add(g); this.tag = g; this.tagCard = card;
     }
     if (this.tagCard.material !== material) this.tagCard.material = material;

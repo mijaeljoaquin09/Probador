@@ -28,7 +28,7 @@ function draw(num, style, team, mode) {
   g.fillStyle = 'rgba(0,0,0,.35)'; g.beginPath(); g.arc(22, 22, 6, 0, Math.PI * 2); g.fill();
   // número
   g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.font = '700 92px "Bagel Fat One","Arial Black",sans-serif';
+  g.font = '700 100px "Bagel Fat One","Arial Black",sans-serif';
   if (mode === 'blur') { g.fillStyle = st.fg; g.globalAlpha = 0.28; g.fillText('···', 128, 60); }
   else {
     if (st.glow || mode === 'glow') { g.shadowColor = st.glow ? st.bd : '#ffe14a'; g.shadowBlur = 18; }
@@ -41,7 +41,8 @@ function draw(num, style, team, mode) {
 export function tagMaterial(num, style = 'tag_clasico', team = '', mode = '') {
   const k = num + '|' + style + '|' + team + '|' + mode;
   if (cache.has(k)) return cache.get(k);
-  const m = new THREE.MeshBasicMaterial({ map: draw(num, style, team, mode), toneMapped: mode !== 'glow' });
+  // sin depthTest: el cartel siempre se ve por encima del pelo/gorro; las paredes las controla game.js ocultándolo
+  const m = new THREE.MeshBasicMaterial({ map: draw(num, style, team, mode), toneMapped: mode !== 'glow', depthTest: false, depthWrite: false });
   if (mode === 'glow') m.color.setRGB(1.6, 1.6, 1.6);
   cache.set(k, m);
   if (cache.size > 300) { const first = cache.keys().next().value; cache.get(first).map.dispose(); cache.get(first).dispose(); cache.delete(first); }
